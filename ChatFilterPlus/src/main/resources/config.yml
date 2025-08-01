@@ -1,0 +1,489 @@
+#
+#                           █▀▀ █░█ ▄▀█ ▀█▀ █▀▀ █ █░░ ▀█▀ █▀▀ █▀█ █▀█ █░░ █░█ █▀
+#                           █▄▄ █▀█ █▀█ ░█░ █▀░ █ █▄▄ ░█░ ██▄ █▀▄ █▀▀ █▄▄ █▄█ ▄█
+#
+#                                            (by MilkyWay for every one)
+#
+#     ◆ Нашли ошибку/баг/недочёт или хотите предложить идею? Напишите мне в Телеграмме - https://t.me/vkusniy_milkyway
+#
+#   ▶ Хочешь поддержать меня? Если да, то я был бы рад если подпишешься на мой Телеграмм-Канал: https://t.me/gornasquad :)
+#
+#
+
+# Настройки всех параметров
+settings:
+
+  # Настройка логирования
+  logs:
+    # Настройка логов плагина в консоль
+    console:
+      # Включен ли параметр? (true/false)
+      enabled: false
+    # Настройка логирования в текстовые файлы
+    file:
+      # Логирование матерных слов
+      bad-words:
+        # Включен ли параметр? (true/false)
+        enabled: true
+        # Формат сообщения для логов в файле
+        # Плейсхолдеры: {player} - имя игрока, {time} - время (ГГГГ-ММ-ДД ЧЧ:ММ:СС), {words} - список матов
+        message: "[{time}] Игрок {player} написал мат(ы): {words}"
+        # Настройка формата вывода списка слов для плейсхолдера {words}
+        words-format:
+          # Разделитель для нескольких слов
+          separator: ", "
+          # Формат для каждого слова (используйте {word} для самого слова)
+          word-template: "{word}"
+          # Специальный формат, если найдено только одно слово
+          single-word-template: "{word}"
+        # Настройка автоматической очистки файла логов
+        cleanup:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Режим очистки файла логов:
+          # - truncate: Полностью очищает файл, если количество строк превышает "max-lines"
+          # - remove-oldest: Удаляет строки, чья временная метка старше "retention-days"
+          # - keep-latest: Сохраняет только последние "max-lines" строк, удаляя самые старые
+          mode: "remove-oldest"
+          # Максимальное количество строк в файле логов (применяется в режимах "truncate" и "keep-latest")
+          max-lines: 10000
+          # Период хранения строк в файле логов (применяется в режиме "remove-oldest")
+          # Формат: комбинация значений с единицами времени, разделённых пробелом
+          # Единицы времени: s (секунды), m (минуты), h (часы), d (дни), w (недели), y (годы)
+          retention-period: "7d"
+      # Логирование ссылок
+      links:
+        # Включен ли параметр? (true/false)
+        enabled: true
+        # Формат сообщения для логов в файле
+        # Плейсхолдеры: {player} - имя игрока, {time} - время (ГГГГ-ММ-ДД ЧЧ:ММ:СС), {links} - список ссылок
+        message: "[{time}] Игрок {player} попытался отправить ссылку(и): {links}"
+        # Настройка формата вывода списка ссылок для плейсхолдера {links}
+        links-format:
+          # Разделитель для нескольких ссылок
+          separator: ", "
+          # Формат для каждой ссылки (используйте {link} для самой ссылки)
+          link-template: "{link}"
+          # Специальный формат, если найдена только одна ссылка
+          single-link-template: "{link}"
+        # Настройка автоматической очистки файла логов
+        cleanup:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Режим очистки файла логов:
+          # - truncate: Полностью очищает файл, если количество строк превышает "max-lines"
+          # - remove-oldest: Удаляет строки, чья временная метка старше "retention-days"
+          # - keep-latest: Сохраняет только последние "max-lines" строк, удаляя самые старые
+          mode: "remove-oldest"
+          # Максимальное количество строк в файле логов (применяется в режимах "truncate" и "keep-latest")
+          max-lines: 10000
+          # Период хранения строк в файле логов (применяется в режиме "remove-oldest")
+          # Формат: комбинация значений с единицами времени, разделённых пробелом
+          # Единицы времени: s (секунды), m (минуты), h (часы), d (дни), w (недели), y (годы)
+          retention-period: "7d"
+
+  # Настройка фильтрации в сообщениях
+  filter:
+    # Настройка фильтрации матерных слов
+    bad-words:
+      # Включен ли параметр? (true/false)
+      enabled: true
+      # Режим работы фильтра
+      # - send-and-notify (Заменяет мат и отправляет уведомление)
+      # - block-and-notify (Не отправляет сообщение с матом и отправляет уведомление)
+      mode: "send-and-notify"
+      # Уровень фильтрации слов:
+      # - high (Фильтрует все слова из списка words.yml, включая производные формы, не игнорируя похожие слова с похожими корнями)
+      # - medium (Фильтрует слова из списка words.yml, включая производные формы, но игнорирует слова с похожими корнями)
+      # - low (Фильтрует только точные совпадения всех слов из списка words.yml и больше ничего)
+      # (Советуется использовать "high" для уровня фильтрации)
+      level: "high"
+    # Настройка фильтрации ссылок
+    links:
+      # Включен ли параметр? (true/false)
+      enabled: true
+      # Режим работы фильтра ссылок
+      # - block-and-notify (Блокирует сообщение с ссылкой и отправляет уведомление)
+      # - replace-and-notify (Заменяет ссылку на указанный текст в параметре "replacement" и отправляет уведомление)
+      mode: "block-and-notify"
+      # Текст замены для ссылок (используется, если mode = "replace-and-notify")
+      replacement: "&#FB8808[Ссылка удалена]&r"
+      # Регулярное выражение для определения ссылок
+      # По умолчанию фильтрует URL-адреса, начинающиеся с http://, https:// или содержащие доменные имена
+      regex: "(?i)(?:h\\s*t\\s*t\\s*p\\s*s?://\\S+|\\S*\\b(?:https?://)?\\S+?\\.(?:com|org|net|ru|io|me|info|biz|co|edu|gov|pro|fun|club|xyz|online|shop|site|tech|store|live|app|blog|world|space|work|game|dev|tv|cc|us|uk|ca|au|de|fr|jp|cn|link|digital|agency|news|media|cloud|page|wiki|art|team|systems|solutions|community|academy|center|group|tools|today|best|win|vip|bet|stream|chat|email|life|company|co\\.uk|co\\.jp|org\\.uk|gov\\.uk|ac\\.uk|edu\\.au|gov\\.au|bit\\.ly|t\\.co|tinyurl\\.com|goo\\.gl)[/\\S]*)"
+      # Настройка белого/чёрного списка для ссылок
+      list-filter:
+        # Включен ли белый/чёрный список? (true/false)
+        enabled: false
+        # Режим работы списка
+        # - whitelist (Разрешены только указанные домены, остальные - запрещены)
+        # - blacklist (Запрещены только указанные домены, остальные - разрешены)
+        mode: "whitelist"
+        # Список доменов для белого/чёрного списка
+        domains:
+          - "https://t.me/gornasquad"
+          - "https://t.me/vkusniy_milkyway"
+
+  # Настройка уведомлений
+  notifications:
+    # Уведомления для матерных слов
+    bad-words:
+      # Уведомления для игрока
+      player:
+        # Уведомление в чат
+        chat:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Текст сообщения, отправляемого игроку в чат
+          message: "&#FB8808◆ &fСтоять! &#FB8808Не матерись &fи &#FB8808не ругайся &fв чате!"
+        # Уведомление через тайтл
+        title:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Сам текст тайтла
+          # (Примечание: используйте "\n" для переноса текста, чтобы создать субтайтл)
+          text: "&#FB8808◆ &fА ну-ка, цыц!\n&#FB8808▶ &fНе матерись в чате ;)"
+          # Время появления тайтла (в тиках, 20 тиков = 1 секунда)
+          fade-in: 10
+          # Время отображения тайтла (в тиках)
+          stay: 60
+          # Время затухания тайтла (в тиках)
+          fade-out: 10
+        # Уведомление через экшенбар
+        actionbar:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Сам текст экшенбара
+          text: "&#FB8808◆ Стоять! &fВам &#FB8808нельзя писать &fматы и ругательства)"
+        # Звук для игрока
+        sound:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Название звука (см. https://hub.spigotmc.org/javadocs/bukkit/org/bukkit/Sound.html)
+          name: "ENTITY_VILLAGER_NO"
+          # Громкость звука
+          volume: 1.0
+          # Высота тона звука
+          pitch: 1.0
+      # Уведомления для администраторов
+      admin:
+        # Уведомление в чат
+        chat:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Текст сообщения, отправляемого администраторам с правом "chatfilterplus.admin.notify"
+          message: "&#FFA500◆ (ᴄʜᴀᴛ-ꜰɪʟᴛᴇʀ) &f| Игрок &#FFA500{player} &fнаписал мат(ы): &#FFA500{words}"
+          # Настройка формата вывода списка слов для плейсхолдера {words}
+          words-format:
+            # Разделитель для нескольких слов
+            separator: ", "
+            # Формат для каждого слова (используйте {word} для самого слова)
+            word-template: "{word}"
+            # Специальный формат, если найдено только одно слово
+            single-word-template: "{word}"
+        # Звук для администраторов
+        sound:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Название звука
+          name: "BLOCK_NOTE_BLOCK_PLING"
+          # Громкость звука
+          volume: 1.0
+          # Высота тона звука
+          pitch: 1.0
+      # Уведомление в консоль
+      console:
+        # Включен ли параметр? (true/false)
+        enabled: true
+        # Текст сообщения, выводимого в консоль
+        message: "&#FFA500◆ (ᴄʜᴀᴛ-ꜰɪʟᴛᴇʀ) &f| Игрок &#FFA500{player} &fнаписал мат(ы): &#FFA500{words}"
+        # Настройка формата вывода списка слов для плейсхолдера {words}
+        words-format:
+          # Разделитель для нескольких слов
+          separator: ", "
+          # Формат для каждого слова (используйте {word} для самого слова)
+          word-template: "{word}"
+          # Специальный формат, если найдено только одно слово
+          single-word-template: "{word}"
+    # Уведомления для ссылок
+    links:
+      # Уведомления для игрока
+      player:
+        # Уведомление в чат
+        chat:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Текст сообщения, отправляемого игроку в чат
+          message: "&#FB8808◆ &fСтоять! &fВы &#FB8808не можете &fотправлять ссылки в чат!"
+        # Уведомление через тайтл
+        title:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Сам текст тайтла
+          text: "&#FB8808▶ &fСтоп!\n&#FB8808◆ &f&fЧто ты там рекламируешь?)"
+          # Время появления тайтла (в тиках, 20 тиков = 1 секунда)
+          fade-in: 10
+          # Время отображения тайтла (в тиках)
+          stay: 60
+          # Время затухания тайтла (в тиках)
+          fade-out: 10
+
+        # Уведомление через экшенбар
+        actionbar:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Сам текст экшенбара
+          text: "&#FB8808◆ &fСтоять! &fТак, &#FB8808хватит &fотправлять ссылки в чат!"
+        # Звук для игрока
+        sound:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Название звука (см. https://hub.spigotmc.org/javadocs/bukkit/org/bukkit/Sound.html)
+          name: "ENTITY_VILLAGER_NO"
+          # Громкость звука
+          volume: 1.0
+          # Высота тона звука
+          pitch: 1.0
+      # Уведомления для администраторов
+      admin:
+        # Уведомление в чат
+        chat:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Текст сообщения, отправляемого администраторам с правом "chatfilterplus.admin.notify"
+          message: "&#FFA500◆ (ᴄʜᴀᴛ-ꜰɪʟᴛᴇʀ) &f| Игрок &#FFA500{player} &fпопытался отправить ссылку(и): &#FFA500{links}"
+          # Настройка формата вывода списка ссылок для плейсхолдера {links}
+          links-format:
+            # Разделитель для нескольких ссылок
+            separator: ", "
+            # Формат для каждой ссылки (используйте {link} для самой ссылки)
+            link-template: "{link}"
+            # Специальный формат, если найдена только одна ссылка
+            single-link-template: "{link}"
+        # Звук для администраторов
+        sound:
+          # Включен ли параметр? (true/false)
+          enabled: true
+          # Название звука
+          name: "BLOCK_NOTE_BLOCK_PLING"
+          # Громкость звука
+          volume: 1.0
+          # Высота тона звука
+          pitch: 1.0
+      # Уведомление в консоль
+      console:
+        # Включен ли параметр? (true/false)
+        enabled: true
+        # Текст сообщения, выводимого в консоль
+        message: "&#FFA500◆ (ᴄʜᴀᴛ-ꜰɪʟᴛᴇʀ) &f| Игрок &#FFA500{player} &fпопытался отправить ссылку(и): &#FFA500{links}"
+        # Настройка формата вывода списка ссылок для плейсхолдера {links}
+        links-format:
+          # Разделитель для нескольких ссылок
+          separator: ", "
+          # Формат для каждой ссылки (используйте {link} для самой ссылки)
+          link-template: "{link}"
+          # Специальный формат, если найдена только одна ссылка
+          single-link-template: "{link}"
+
+  # Настройка системы наказаний
+  punishments:
+    # Наказания за использование матерных слов
+    bad-words:
+      # Включен ли параметр? (true/false)
+      enabled: false
+      # Настройка логирования наказаний в файл badwords-punishments-logs.txt
+      logs:
+        # Включить запись логов наказаний? (true/false)
+        enabled: true
+        # Формат сообщения для логов в файле
+        # Плейсхолдеры: {player} - имя игрока, {time} - время (ГГГГ-ММ-ДД ЧЧ:ММ:СС),
+        # {violations} - количество нарушений, {stage} - стадия наказания,
+        # {words} - список матов, {commands} - список выполненных команд
+        message: "[{time}] Игрок {player} (нарушений: {violations}, стадия: {stage}) написал мат(ы): {words}. Выполнены команды: {commands}"
+        # Настройка формата вывода списка слов для плейсхолдера {words}
+        words-format:
+          # Разделитель для нескольких слов
+          separator: ", "
+          # Формат для каждого слова (используйте {word} для самого слова)
+          word-template: "{word}"
+          # Специальный формат, если найдено только одно слово
+          single-word-template: "{word}"
+        # Настройка формата вывода списка команд для плейсхолдера {commands}
+        commands-format:
+          # Разделитель для нескольких команд
+          separator: ", "
+          # Формат для каждой команды (используйте {command} для самой команды)
+          command-template: "{command}"
+          # Специальный формат, если выполнена только одна команда
+          single-command-template: "{command}"
+      # Исключения: игроки или группы, которые не получают наказания
+      exceptions:
+        players:
+          - "Player1"
+          - "Player2"
+        groups:
+          - "admin"
+          - "moderator"
+      # Разрешение для обхода наказаний за мат
+      bypass-permission: "chatfilterplus.bypass.punishment.badwords"
+      # Настройка стадий наказаний
+      # Каждая стадия активируется, когда игрок написал указанное количество матов
+      stages:
+        1:
+          disable-notifications:
+            message: false
+            title: false
+            actionbar: false
+            sound: false
+          commands:
+            - "kick {player} Использование мата ({words})"
+          words-format:
+            separator: ", "
+            word-template: "{word}"
+            single-word-placeholder: "{word}"
+        3:
+          disable-notifications:
+            message: false
+            title: false
+            actionbar: false
+            sound: false
+          commands:
+            - "tempmute {player} 5m Нарушение чата ({words})"
+          words-format:
+            separator: ", "
+            word-template: "{word}"
+            single-word-placeholder: "{word}"
+        5:
+          disable-notifications:
+            message: false
+            title: false
+            actionbar: false
+            sound: false
+          commands:
+            - "tempmute {player} 10m Нарушение чата ({words})"
+          words-format:
+            separator: ", "
+            word-template: "{word}"
+            single-word-placeholder: "{word}"
+        7:
+          disable-notifications:
+            message: false
+            title: false
+            actionbar: false
+            sound: false
+          commands:
+            - "tempmute {player} 20m Нарушение чата ({words})"
+          words-format:
+            separator: ", "
+            word-template: "{word}"
+            single-word-placeholder: "{word}"
+    # Наказания за отправку ссылок
+    links:
+      # Включен ли параметр? (true/false)
+      enabled: false
+      # Настройка логирования наказаний в файл links-punishments-logs.txt
+      logs:
+        # Включить запись логов наказаний? (true/false)
+        enabled: true
+        # Формат сообщения для логов в файле
+        # Плейсхолдеры: {player} - имя игрока, {time} - время (ГГГГ-ММ-ДД ЧЧ:ММ:СС),
+        # {violations} - количество нарушений, {stage} - стадия наказания,
+        # {links} - список ссылок, {commands} - список выполненных команд
+        message: "[{time}] Игрок {player} (нарушений: {violations}, стадия: {stage}) отправил ссылку(и): {links}. Выполнены команды: {commands}"
+        # Настройка формата вывода списка ссылок для плейсхолдера {links}
+        links-format:
+          # Разделитель для нескольких ссылок
+          separator: ", "
+          # Формат для каждой ссылки (используйте {link} для самой ссылки)
+          link-template: "{link}"
+          # Специальный формат, если найдена только одна ссылка
+          single-link-template: "{link}"
+        # Настройка формата вывода списка команд для плейсхолдера {commands}
+        commands-format:
+          # Разделитель для нескольких команд
+          separator: ", "
+          # Формат для каждой команды (используйте {command} для самой команды)
+          command-template: "{command}"
+          # Специальный формат, если выполнена только одна команда
+          single-command-template: "{command}"
+      # Исключения: игроки или группы, которые не получают наказания
+      exceptions:
+        players:
+          - "Player1"
+          - "Player2"
+        groups:
+          - "admin"
+          - "moderator"
+      # Разрешение для обхода наказаний за ссылки
+      bypass-permission: "chatfilterplus.bypass.punishment.links"
+      # Настройка стадий наказаний
+      # Каждая стадия активируется, когда игрок отправил указанное количество ссылок
+      stages:
+        1:
+          disable-notifications:
+            message: false
+            title: false
+            actionbar: false
+            sound: false
+          commands:
+            - "kick {player} Отправка ссылок ({links})"
+          links-format:
+            separator: ", "
+            link-template: "{link}"
+            single-link-placeholder: "{link}"
+        3:
+          disable-notifications:
+            message: false
+            title: false
+            actionbar: false
+            sound: false
+          commands:
+            - "tempmute {player} 5m Нарушение чата ({links})"
+          links-format:
+            separator: ", "
+            link-template: "{link}"
+            single-link-placeholder: "{link}"
+        5:
+          disable-notifications:
+            message: false
+            title: false
+            actionbar: false
+            sound: false
+          commands:
+            - "tempmute {player} 10m Нарушение чата ({links})"
+          links-format:
+            separator: ", "
+            link-template: "{link}"
+            single-link-placeholder: "{link}"
+        7:
+          disable-notifications:
+            message: false
+            title: false
+            actionbar: false
+            sound: false
+          commands:
+            - "tempmute {player} 20m Нарушение чата ({links})"
+          links-format:
+            separator: ", "
+            link-template: "{link}"
+            single-link-placeholder: "{link}"
+
+# Сообщения плагина
+messages:
+  no-permission: "&#FB8808▶ &fНедостаточно &#FB8808прав на использование &fданной команды!"
+  reload-success: "&#FFFF00◆ &#FFEF00C&#FFE600h&#FFDE00a&#FFD600t&#FFCE00F&#FFC600i&#FFBE00l&#FFB500t&#FFAD00e&#FFA500r &f| &fПлагин успешно перезагружен за &#FFFF00{time}мс."
+  reload-failure: "&#FB8808▶ Ошибка! &fПочему-то &#FB8808не удалось &fперезагрузить плагин..."
+  add-word-success: "&#FFFF00◆ &fСлово &#FFFF00«{word}» &fс заменой на &#FFFF00«{replacement}» &fуспешно добавлено!"
+  add-word-failure: "&#FB8808▶ Ошибка! &fПочему-то &#FB8808не удалось &fдобавить слово &#FFFF00«{word}»&f..."
+  add-word-already-exists: "&#FB8808▶ Ошибка! &fСлово &#FB8808«{word}» &fс заменой на &#FB8808«{replacement}» &fуже существует!"
+  remove-word-success: "&#FFFF00◆ &fСлово &#FFFF00«{word}» &fуспешно удалено!"
+  remove-word-failure: "&#FB8808▶ Ошибка! &fПочему-то &#FB8808не удалось &fудалить слово &#FFFF00«{word}»&f..."
+  remove-word-not-found: "&#FB8808▶ Ошибка! &fСлово &#FB8808«{word}» &fне найдено в списке!"
+  help:
+    - " &r "
+    - " &#FFFF00▶ &fКоманды плагина: "
+    - " &r "
+    - "  &#FFFF00◆ /cfp reload &f- Перезагрузить плагин"
+    - "  &#FFFF00◆ /cfp addword <Слово> <Замена> &f- Добавить мат в список"
+    - "  &#FFFF00◆ /cfp removeword <Слово> &f- Удалить мат из списка"
+    - " &r "

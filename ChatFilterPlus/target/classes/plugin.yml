@@ -1,0 +1,36 @@
+name: ChatFilterPlus
+version: '1.3'
+main: org.gw.chatfilterplus.ChatFilterPlus
+author: [_MilkyWay16]
+api-version: '1.16'
+depend: [LuckPerms]
+commands:
+  chatfilterplus:
+    description: Основная команда плагина ChatFilterPlus
+    aliases: [cfp]
+    usage: /<command> <addword|removeword|reload> [слово] [замена]
+permissions:
+  chatfilterplus.bypass.chatfilter.badwords:
+    description: Позволяет игроку обойти фильтр матерных слов
+    default: op
+  chatfilterplus.bypass.chatfilter.links:
+    description: Позволяет игроку обойти фильтр ссылок
+    default: op
+  chatfilterplus.bypass.punishment.badwords:
+    description: Позволяет обойти наказания за мат
+    default: op
+  chatfilterplus.bypass.punishment.links:
+    description: Позволяет обойти наказания за ссылки
+    default: op
+  chatfilterplus.admin.notify:
+    description: Позволяет получать уведомления о нарушениях фильтра чата
+    default: op
+  chatfilterplus.reload:
+    description: Позволяет перезагружать плагин
+    default: op
+  chatfilterplus.addword:
+    description: Позволяет добавлять слова в фильтр
+    default: op
+  chatfilterplus.removeword:
+    description: Позволяет удалять слова из фильтра
+    default: op
