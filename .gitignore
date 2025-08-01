@@ -1,0 +1,13 @@
+# Maven
+target/
+*.iml
+.idea/
+
+# Gradle
+build/
+.gradle/
+
+# Общие
+*.log
+*.class
+*.jar
