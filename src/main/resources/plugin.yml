@@ -1,0 +1,63 @@
+name: ChatFilterPlus
+version: 2.0
+main: org.gw.chatfilterplus.ChatFilterPlus
+author: vkusniy_milkyway
+api-version: '1.16'
+depend: [LuckPerms]
+commands:
+  chatfilterplus:
+    aliases: [cfp]
+permissions:
+  chatfilterplus.bypass.chatfilter.badwords:
+    default: op
+  chatfilterplus.bypass.chatfilter.links:
+    default: op
+  chatfilterplus.bypass.chatfilter.caps:
+    default: op
+  chatfilterplus.bypass.chatfilter.blockedwords:
+    default: op
+  chatfilterplus.bypass.chatfilter.antispam:
+    default: op
+  chatfilterplus.bypass.punishment.badwords:
+    default: op
+  chatfilterplus.bypass.punishment.links:
+    default: op
+  chatfilterplus.bypass.punishment.caps:
+    default: op
+  chatfilterplus.bypass.punishment.blockedwords:
+    default: op
+  chatfilterplus.bypass.punishment.antispam:
+    default: op
+  chatfilterplus.admin.notify:
+    default: op
+  chatfilterplus.reload:
+    default: op
+  chatfilterplus.words:
+    default: op
+    children:
+      chatfilterplus.words.add: true
+      chatfilterplus.words.remove: true
+      chatfilterplus.words.list: true
+  chatfilterplus.links:
+    default: op
+    children:
+      chatfilterplus.links.whitelist.add: true
+      chatfilterplus.links.whitelist.remove: true
+      chatfilterplus.links.list: true
+  chatfilterplus.caps:
+    default: op
+    children:
+      chatfilterplus.caps.whitelist.add: true
+      chatfilterplus.caps.whitelist.remove: true
+      chatfilterplus.caps.list: true
+  chatfilterplus.notify:
+    default: op
+  chatfilterplus.admin:
+    default: op
+    children:
+      chatfilterplus.words: true
+      chatfilterplus.links: true
+      chatfilterplus.caps: true
+      chatfilterplus.reload: true
+      chatfilterplus.notify: true
+      chatfilterplus.admin.notify: true
