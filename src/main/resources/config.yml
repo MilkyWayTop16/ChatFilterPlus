@@ -96,6 +96,12 @@ settings:
       - "me"
       - "em"
 
+  # Уведомления админам о своих собственных нарушениях
+  admin-self-notify:
+    # Включить уведомления админам о своих же нарушениях в чате? (true/false)
+    # (Если включено, то при нарушении админу уведомления о нарушениях отправляться не будут)
+    enabled: true
+
 # Действия для сообщений плагина
 #
 # Доступные действия для любого списка:
@@ -271,11 +277,11 @@ actions:
     - "[message] &#FFFF00   ◆ /cfp links whitelist add/remove <Ссылка/домен> &f— Управление вайтлистом ссылок и доменов"
     - "[message] &#FFFF00   ◆ /cfp links list &f— Посмотреть список вайтлиста ссылок и доменов"
     - "[message] &r "
-    - "[message] &#FFFF00   ◆ /cfp caps whitelist add/remove <слово> &f— Управление вайтлиста капса"
+    - "[message] &#FFFF00   ◆ /cfp caps whitelist add/remove <Слово> &f— Управление вайтлиста капса"
     - "[message] &#FFFF00   ◆ /cfp caps list &f— Посмотреть список вайтлиста капса"
     - "[message] &r "
-    - "[message] &#FFFF00   ◆ /cfp notify <on/off> (Никнейм) &f— Переключить уведомления"
-    - "[message] &#FFFF00   ◆ /cfp reload <configs/cache/all> &f— Перезагрузка определённой части плагина"
+    - "[message] &#FFFF00   ◆ /cfp notify (on/off) (Никнейм) &f— Переключить уведомления"
+    - "[message] &#FFFF00   ◆ /cfp reload (configs/cache/all) &f— Перезагрузка определённой части плагина"
     - "[message] &#FFFF00   ◆ /cfp help &f— Показать все команды плагина (это сообщение)"
     - "[message] &r "
     - "[sound] BLOCK_LEVER_CLICK"

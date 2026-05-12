@@ -5,7 +5,9 @@ import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.WordNormalizer;
 
 import java.util.*;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Getter
 public class MessageCacheManager {
@@ -92,7 +94,7 @@ public class MessageCacheManager {
             return filterProcessor.processMessage(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords);
         }
 
-        String cacheKey = originalMessage + "|" + bypassBadWords + "|" + bypassLinks + "|" + bypassBlockedWords + "|" + bypassCaps;
+        String cacheKey = originalMessage + "|" + bypassBadWords + "|" + bypassLinks + "|" + bypassBlockedWords;
         CachedMessage cached = messageCache.get(cacheKey);
 
         if (cached != null && (System.currentTimeMillis() - cached.getTimestamp()) < cacheTTL) {

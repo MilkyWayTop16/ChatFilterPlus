@@ -57,7 +57,7 @@ public class FilterProcessor {
         }
 
         if (configManager.isLinksFilterEnabled() && !bypassLinks) {
-            filteredMessage = filterLinks(originalMessage, links);
+            filteredMessage = filterLinks(filteredMessage, links);
         }
 
         boolean isCaps = capsManager.isCaps(originalMessage);
@@ -110,17 +110,22 @@ public class FilterProcessor {
                     String matchedText = matcher.group(0);
                     badWords.add(matchedText);
 
-                    String repl = replacement.equals("*") ? generateDynamicReplacement(matchedText) : replacement;
+                    String repl = replacement.equals("*")
+                            ? generateDynamicReplacement(matchedText)
+                            : replacement;
+
                     replacements.add(new Replacement(matcher.start(), matchedText.length(), repl));
                 }
             }
 
             replacements.sort(Comparator.comparingInt(r -> -r.start));
+
             StringBuilder filteredMessage = new StringBuilder(originalMessage);
             for (Replacement rep : replacements) {
                 filteredMessage.replace(rep.start, rep.start + rep.length, rep.replacement);
             }
             return filteredMessage.toString();
+
         } else {
             String[] words = originalMessage.split("\\s+");
             StringBuilder result = new StringBuilder(originalMessage.length() + 32);
@@ -132,7 +137,9 @@ public class FilterProcessor {
                         String foundWord = matcher.group(1);
                         if (wordNormalizer.isSafeWord(foundWord)) continue;
                         badWords.add(word);
-                        filteredWord = replacement.equals("*") ? generateDynamicReplacement(word) : replacement;
+                        filteredWord = replacement.equals("*")
+                                ? generateDynamicReplacement(word)
+                                : replacement;
                         break;
                     }
                 }
@@ -142,28 +149,22 @@ public class FilterProcessor {
         }
     }
 
-    private String filterLinks(String originalMessage, List<String> links) {
-        String normalized = linksManager.normalizeForDetectionPublic(originalMessage);
-
-        if (normalized.isEmpty()) return originalMessage;
-
-        Matcher linkMatcher = linksManager.getLinkPattern().matcher(normalized);
-        boolean foundAnyLink = false;
+    private String filterLinks(String message, List<String> links) {
+        Matcher linkMatcher = linksManager.getLinkPattern().matcher(message);
+        StringBuilder sb = new StringBuilder();
 
         while (linkMatcher.find()) {
-            String matched = linkMatcher.group();
-            if (!linksManager.isLinkAllowed(matched)) {
-                foundAnyLink = true;
-                links.add(matched);
+            String link = linkMatcher.group();
+            if (!linksManager.isLinkAllowed(link)) {
+                links.add(link);
+                String replacement = HexColors.translate(configManager.getLinksFilterReplacement());
+                linkMatcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+            } else {
+                linkMatcher.appendReplacement(sb, Matcher.quoteReplacement(link));
             }
         }
-
-        if (foundAnyLink) {
-            String replacement = HexColors.translate(configManager.getLinksFilterReplacement());
-            return replacement;
-        }
-
-        return originalMessage;
+        linkMatcher.appendTail(sb);
+        return sb.toString();
     }
 
     private String generateDynamicReplacement(String word) {

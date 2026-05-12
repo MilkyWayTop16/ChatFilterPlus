@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Getter
 public class PunishmentManager {
@@ -31,11 +32,11 @@ public class PunishmentManager {
         return sdf;
     });
 
-    private final Map<String, Integer> playerBadWordsViolations = new ConcurrentHashMap<>();
-    private final Map<String, Integer> playerLinksViolations = new ConcurrentHashMap<>();
-    private final Map<String, Integer> playerCapsViolations = new ConcurrentHashMap<>();
-    private final Map<String, Integer> playerBlockedWordsViolations = new ConcurrentHashMap<>();
-    private final Map<String, Integer> playerAntiSpamViolations = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> playerBadWordsViolations = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> playerLinksViolations = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> playerCapsViolations = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> playerBlockedWordsViolations = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> playerAntiSpamViolations = new ConcurrentHashMap<>();
 
     private final Map<String, Map<String, Long>> playerBadWordsNotificationCooldowns = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Long>> playerLinksNotificationCooldowns = new ConcurrentHashMap<>();
@@ -82,11 +83,11 @@ public class PunishmentManager {
 
     private void cleanOldViolations() {
         long currentTime = System.currentTimeMillis();
-        cleanMap(playerBadWordsViolations);
-        cleanMap(playerLinksViolations);
-        cleanMap(playerCapsViolations);
-        cleanMap(playerBlockedWordsViolations);
-        cleanMap(playerAntiSpamViolations);
+        cleanAtomicMap(playerBadWordsViolations);
+        cleanAtomicMap(playerLinksViolations);
+        cleanAtomicMap(playerCapsViolations);
+        cleanAtomicMap(playerBlockedWordsViolations);
+        cleanAtomicMap(playerAntiSpamViolations);
 
         cleanCooldowns(playerBadWordsNotificationCooldowns, currentTime);
         cleanCooldowns(playerLinksNotificationCooldowns, currentTime);
@@ -95,7 +96,7 @@ public class PunishmentManager {
         cleanCooldowns(playerAntiSpamNotificationCooldowns, currentTime);
     }
 
-    private <T> void cleanMap(Map<String, T> map) {
+    private void cleanAtomicMap(Map<String, AtomicInteger> map) {
         map.entrySet().removeIf(entry -> Bukkit.getPlayerExact(entry.getKey()) == null);
     }
 
@@ -112,25 +113,28 @@ public class PunishmentManager {
         if (!isPunishmentsEnabled(type) || isPlayerExempt(player, type)) return;
 
         String playerName = player.getName();
-        Map<String, Integer> violationsMap = getViolationsMap(type);
-        int violations = violationsMap.getOrDefault(playerName, 0) + 1;
-        violationsMap.put(playerName, violations);
+        AtomicInteger counter = getViolationsMap(type).computeIfAbsent(playerName, k -> new AtomicInteger(0));
+        int violations = counter.incrementAndGet();
 
         ConfigurationSection punishments = getPunishmentsSection(type);
         if (punishments == null) return;
 
         String stage = String.valueOf(violations);
-        List<String> commands = punishments.getStringList(stage + ".commands");
-        List<String> notificationCooldowns = punishments.getStringList(stage + ".notification-cooldowns");
+        ConfigurationSection stagesSection = punishments.getConfigurationSection("stages");
+        List<String> actions = (stagesSection != null) ? stagesSection.getStringList(stage + ".actions") : Collections.emptyList();
+        List<String> notificationCooldowns = (stagesSection != null) ? stagesSection.getStringList(stage + ".notification-cooldowns") : Collections.emptyList();
 
-        if (!commands.isEmpty()) {
-            executeCommands(player, commands);
-            logPunishment(playerName, items, violations, stage, commands, type);
+        if (!actions.isEmpty()) {
+            List<String> parsedCommands = parsePunishmentActions(actions, player, items);
+            if (!parsedCommands.isEmpty()) {
+                executeCommands(player, parsedCommands);
+                logPunishment(playerName, items, violations, stage, parsedCommands, type);
+            }
         }
         updateNotificationCooldowns(playerName, notificationCooldowns, type);
     }
 
-    private Map<String, Integer> getViolationsMap(FilterType type) {
+    private Map<String, AtomicInteger> getViolationsMap(FilterType type) {
         return switch (type) {
             case BAD_WORDS -> playerBadWordsViolations;
             case LINKS -> playerLinksViolations;
@@ -199,6 +203,41 @@ public class PunishmentManager {
             plugin.getServer().getScheduler().runTask(plugin, () ->
                     plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), formatted));
         }
+    }
+
+    private List<String> parsePunishmentActions(List<String> actions, Player player, List<String> items) {
+        if (actions == null || actions.isEmpty()) return Collections.emptyList();
+
+        String playerName = player.getName();
+        String wordsJoined = String.join(", ", items);
+        String linksJoined = wordsJoined;
+        String originalMessage = items.isEmpty() ? "[CAPS]" : String.join(" ", items);
+        String reason = items.isEmpty() ? "" : items.get(0);
+
+        List<String> result = new ArrayList<>(actions.size());
+        for (String action : actions) {
+            if (action == null) continue;
+            String trimmed = action.trim();
+            if (trimmed.isEmpty()) continue;
+
+            if (trimmed.startsWith("[console-command]")) {
+                trimmed = trimmed.substring("[console-command]".length()).trim();
+            } else if (trimmed.startsWith("[console-command] ")) {
+                trimmed = trimmed.substring("[console-command] ".length()).trim();
+            }
+
+            String cmd = trimmed
+                    .replace("{player}", playerName)
+                    .replace("{words}", wordsJoined)
+                    .replace("{links}", linksJoined)
+                    .replace("{original-message}", originalMessage)
+                    .replace("{reason}", reason);
+
+            if (!cmd.isEmpty()) {
+                result.add(cmd);
+            }
+        }
+        return result;
     }
 
     private void logPunishment(String playerName, List<String> items, int violations, String stage, List<String> commands, FilterType type) {

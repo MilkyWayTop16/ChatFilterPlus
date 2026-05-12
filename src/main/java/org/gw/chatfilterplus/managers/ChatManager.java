@@ -2,6 +2,7 @@ package org.gw.chatfilterplus.managers;
 
 import lombok.Getter;
 import org.bukkit.Bukkit;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -121,7 +122,9 @@ public class ChatManager implements Listener {
         if (!bypassAntiSpam) {
             AntiSpamResult spamResult = antiSpamManager.checkSpam(player, originalMessage);
             if (spamResult != null) {
-                sendAntiSpamNotification(player, spamResult, originalMessage);
+                final AntiSpamResult finalSpamResult = spamResult;
+                Bukkit.getScheduler().runTask(plugin, () ->
+                        sendAntiSpamNotification(player, finalSpamResult, originalMessage));
 
                 if (!"character-flood-first".equals(spamResult.reason)) {
                     cancelEvent.accept(true);
@@ -200,6 +203,8 @@ public class ChatManager implements Listener {
     }
 
     private void sendAntiSpamNotification(Player player, AntiSpamResult result, String originalMessage) {
+        if (player == null || !player.isOnline()) return;
+
         plugin.log("Обнаружен спам от &#ffff00" + player.getName() + " &f→ &#ffff00" + originalMessage);
 
         List<String> items = List.of(originalMessage);
@@ -211,8 +216,14 @@ public class ChatManager implements Listener {
         notificationManager.notifyConsole(player, FilterType.ANTI_SPAM, items);
         notificationManager.notifyDiscord(player, FilterType.ANTI_SPAM, items);
 
-        Bukkit.getScheduler().runTaskLater(plugin, () ->
-                configManager.executeActionsFromAntiSpam(player, "player." + result.reason, placeholders), 3L);
+        String subPath = switch (result.reason) {
+            case "general-cooldown" -> "general-cooldown";
+            case "similar-message-cooldown" -> "similar-message-cooldown";
+            case "character-flood", "character-flood-first" -> "character-flood";
+            default -> "general-cooldown";
+        };
+
+        safeExecutePlayerAction(player, FilterType.ANTI_SPAM, subPath, placeholders);
 
         punishmentManager.handlePunishment(player, FilterType.ANTI_SPAM, items);
     }
@@ -221,22 +232,71 @@ public class ChatManager implements Listener {
                                       boolean bypassBadWords, boolean bypassLinks,
                                       boolean bypassCaps, boolean bypassBlockedWords, String originalMessage) {
 
+        if (player == null || !player.isOnline()) return;
+
         if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
-            sendBlockedWordsNotification(player, cached.getBlockedWords());
+            Bukkit.getScheduler().runTask(plugin, () ->
+                    sendFilterNotification(FilterType.BLOCKED_WORDS, player, cached.getBlockedWords(), originalMessage));
         }
         if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
-            sendBadWordsNotification(player, cached.getBadWords());
+            Bukkit.getScheduler().runTask(plugin, () ->
+                    sendFilterNotification(FilterType.BAD_WORDS, player, cached.getBadWords(), originalMessage));
         }
         if (cached.isCaps() && configManager.isCapsFilterEnabled() && !bypassCaps) {
-            sendCapsStaffNotifications(player, originalMessage);
-
+            Bukkit.getScheduler().runTask(plugin, () ->
+                    sendFilterNotification(FilterType.CAPS, player, List.of(originalMessage), originalMessage));
             if (shouldSendCapsPlayerNotification(cached, bypassBadWords, bypassBlockedWords)) {
-                sendCapsPlayerNotification(player);
+                Bukkit.getScheduler().runTaskLater(plugin, () ->
+                        safeNotifyPlayer(player, FilterType.CAPS, "[CAPS]"), 3L);
             }
         }
         if (!cached.getLinks().isEmpty() && configManager.isLinksFilterEnabled() && !bypassLinks) {
-            sendLinksNotification(player, cached.getLinks());
+            Bukkit.getScheduler().runTask(plugin, () ->
+                    sendFilterNotification(FilterType.LINKS, player, cached.getLinks(), originalMessage));
         }
+    }
+
+    private void sendFilterNotification(FilterType type, Player player, List<String> items, String originalMessage) {
+        if (player == null || !player.isOnline()) return;
+
+        List<String> uniqueItems = new ArrayList<>(new LinkedHashSet<>(items));
+
+        plugin.log(getLogMessage(type, player.getName(), uniqueItems, originalMessage));
+        logToFile(player.getName(), uniqueItems, type);
+
+        notificationManager.notifyAdmins(player, type, uniqueItems);
+        notificationManager.notifyConsole(player, type, uniqueItems);
+        notificationManager.notifyDiscord(player, type, uniqueItems);
+        punishmentManager.handlePunishment(player, type, uniqueItems);
+
+        if (type != FilterType.CAPS) {
+            safeNotifyPlayer(player, type, uniqueItems.isEmpty() ? "" : uniqueItems.get(0));
+        }
+    }
+
+    private void safeNotifyPlayer(Player player, FilterType type, String item) {
+        if (player == null || !player.isOnline()) return;
+        Bukkit.getScheduler().runTask(plugin, () -> notificationManager.notifyPlayer(player, type, item));
+    }
+
+    private void safeExecutePlayerAction(Player player, FilterType type, String subPath, Map<String, String> placeholders) {
+        if (player == null || !player.isOnline()) return;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            switch (type) {
+                case ANTI_SPAM -> configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
+                default -> {}
+            }
+        });
+    }
+
+    private String getLogMessage(FilterType type, String playerName, List<String> items, String originalMessage) {
+        return switch (type) {
+            case BAD_WORDS -> "Обнаружен мат от &#ffff00" + playerName + " &f→ &#ffff00" + String.join(", ", items);
+            case LINKS -> "Обнаружена ссылка от &#ffff00" + playerName + " &f→ &#ffff00" + String.join(", ", items);
+            case CAPS -> "Обнаружен капс от &#ffff00" + playerName + " &f→ &#ffff00" + originalMessage;
+            case BLOCKED_WORDS -> "Обнаружено запрещённое слово от &#ffff00" + playerName + " &f→ &#ffff00" + String.join(", ", items);
+            case ANTI_SPAM -> "Обнаружен спам от &#ffff00" + playerName + " &f→ &#ffff00" + originalMessage;
+        };
     }
 
     private boolean shouldSendCapsPlayerNotification(MessageCacheManager.CachedMessage cached,
@@ -248,70 +308,6 @@ public class ChatManager implements Listener {
             return !"badwords".equalsIgnoreCase(configManager.getCapsNotificationPriorityBadwords());
         }
         return true;
-    }
-
-    private void sendCapsStaffNotifications(Player player, String originalMessage) {
-        plugin.log("Обнаружен капс от &#ffff00" + player.getName() + " &f→ &#ffff00" + originalMessage);
-
-        List<String> items = List.of(originalMessage);
-        logToFile(player.getName(), items, FilterType.CAPS);
-
-        notificationManager.notifyAdmins(player, FilterType.CAPS, items);
-        notificationManager.notifyConsole(player, FilterType.CAPS, items);
-        notificationManager.notifyDiscord(player, FilterType.CAPS, items);
-
-        punishmentManager.handlePunishment(player, FilterType.CAPS, List.of("[CAPS]"));
-    }
-
-    private void sendCapsPlayerNotification(Player player) {
-        Bukkit.getScheduler().runTaskLater(plugin, () ->
-                notificationManager.notifyPlayer(player, FilterType.CAPS, "[CAPS]"), 3L);
-    }
-
-    private void sendBlockedWordsNotification(Player player, List<String> words) {
-        List<String> uniqueWords = new ArrayList<>(new LinkedHashSet<>(words));
-
-        plugin.log("Обнаружено запрещённое слово от &#ffff00" + player.getName() + " &f→ &#ffff00" + String.join(", ", uniqueWords));
-        logToFile(player.getName(), uniqueWords, FilterType.BLOCKED_WORDS);
-
-        notificationManager.notifyAdmins(player, FilterType.BLOCKED_WORDS, uniqueWords);
-        notificationManager.notifyConsole(player, FilterType.BLOCKED_WORDS, uniqueWords);
-        notificationManager.notifyDiscord(player, FilterType.BLOCKED_WORDS, uniqueWords);
-        punishmentManager.handlePunishment(player, FilterType.BLOCKED_WORDS, uniqueWords);
-
-        Bukkit.getScheduler().runTask(plugin, () ->
-                notificationManager.notifyPlayer(player, FilterType.BLOCKED_WORDS, uniqueWords.get(0)));
-    }
-
-    private void sendBadWordsNotification(Player player, List<String> words) {
-        List<String> uniqueWords = new ArrayList<>(new LinkedHashSet<>(words));
-
-        plugin.log("Обнаружен мат от &#ffff00" + player.getName() + " &f→ &#ffff00" + String.join(", ", uniqueWords));
-        logToFile(player.getName(), uniqueWords, FilterType.BAD_WORDS);
-
-        notificationManager.notifyAdmins(player, FilterType.BAD_WORDS, uniqueWords);
-        notificationManager.notifyConsole(player, FilterType.BAD_WORDS, uniqueWords);
-        notificationManager.notifyDiscord(player, FilterType.BAD_WORDS, uniqueWords);
-        punishmentManager.handlePunishment(player, FilterType.BAD_WORDS, uniqueWords);
-
-        Bukkit.getScheduler().runTask(plugin, () ->
-                notificationManager.notifyPlayer(player, FilterType.BAD_WORDS, uniqueWords.get(0)));
-    }
-
-    private void sendLinksNotification(Player player, List<String> links) {
-        plugin.log("Обнаружена ссылка от &#ffff00" + player.getName() + " &f→ &#ffff00" + String.join(", ", links));
-
-        if (linksLogFile.exists()) {
-            logToFile(player.getName(), links, FilterType.LINKS);
-        }
-
-        notificationManager.notifyAdmins(player, FilterType.LINKS, links);
-        notificationManager.notifyConsole(player, FilterType.LINKS, links);
-        notificationManager.notifyDiscord(player, FilterType.LINKS, links);
-        punishmentManager.handlePunishment(player, FilterType.LINKS, links);
-
-        Bukkit.getScheduler().runTaskLater(plugin, () ->
-                notificationManager.notifyPlayer(player, FilterType.LINKS, links.get(0)), 3L);
     }
 
     private void logToFile(String playerName, List<String> items, FilterType type) {
@@ -334,7 +330,7 @@ public class ChatManager implements Listener {
             case LINKS -> configManager.getLinksConfig().getString("logs.file.links.message");
             case CAPS -> configManager.getCapsConfig().getString("logs.file.caps.message", "[{time}] Игрок {player} использовал капс: {original-message}");
             case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getString("logs.file.blocked-words.message", "[{time}] Игрок {player} использовал запрещённое слово: {words}");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("logs.file.anti-spam.message", "[{time}] Игрок {player} пойман на спаме: {original-message}");
+            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("logs.file.anti-spam.message", "[{time}] Игрок {player} спамил сообщениями: {reason}");
         };
 
         String linksFormatted = type == FilterType.LINKS ? linksManager.getFormattedLinks(items) : String.join(", ", items);
@@ -344,7 +340,8 @@ public class ChatManager implements Listener {
                 .replace("{time}", dateFormat.format(new Date()))
                 .replace("{words}", String.join(", ", items))
                 .replace("{links}", linksFormatted)
-                .replace("{original-message}", items.isEmpty() ? "" : String.join(", ", items));
+                .replace("{original-message}", items.isEmpty() ? "" : String.join(", ", items))
+                .replace("{reason}", items.isEmpty() ? "" : items.get(0));
     }
 
     private boolean isPlayerBypassingFilter(String filterName, Player player) {

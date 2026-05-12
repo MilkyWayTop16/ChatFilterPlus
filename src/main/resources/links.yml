@@ -46,6 +46,94 @@ filter:
         - "admin"
         - "moderator"
 
+  # Более умная детекция ссылок и доменов
+  smart-detection:
+    # Включить умную двухэтапную проверку ссылок? (true/false)
+    # (Рекомендуется оставить "true", так как параметр сильно уменьшает ложные срабатывания)
+    enabled: true
+    # Быстрые триггеры (Проверка без тяжёлой нормализации)
+    quick-triggers:
+      - "http"
+      - "https"
+      - "www."
+      - ".ru"
+      - ".com"
+      - ".net"
+      - ".org"
+      - ".io"
+      - ".me"
+      - ".gg"
+      - "t.me"
+      - "discord.gg"
+      - "bit.ly"
+      - "tinyurl"
+    # Реальные TLD (Только эти считаются ссылками после самой нормализации)
+    # TLD (Иначе Top‑Level Domain) — Это, можно сказать, последняя часть доменного имени, которая идёт после точки
+    # (Например, в адресе "example.com" TLD — это ".com", а в "site.ru" — ".ru")
+    tlds:
+      - "ru"
+      - "com"
+      - "net"
+      - "org"
+      - "io"
+      - "me"
+      - "gg"
+      - "tv"
+      - "cc"
+      - "us"
+      - "uk"
+      - "de"
+      - "fr"
+      - "jp"
+      - "cn"
+      - "co"
+      - "info"
+      - "biz"
+      - "xyz"
+      - "online"
+      - "shop"
+      - "site"
+      - "tech"
+      - "store"
+      - "app"
+      - "blog"
+      - "dev"
+      - "live"
+      - "cloud"
+      - "wiki"
+      - "news"
+      - "media"
+      - "fun"
+      - "club"
+      - "vip"
+      - "bet"
+      - "stream"
+      - "chat"
+      - "email"
+      - "life"
+      - "company"
+      - "systems"
+      - "solutions"
+      - "community"
+      - "academy"
+      - "center"
+      - "group"
+      - "tools"
+      - "today"
+      - "best"
+      - "win"
+      - "digital"
+      - "agency"
+      - "page"
+      - "art"
+      - "team"
+    # Минимальное количество частей домена
+    # (Например, вот так: "домен.tld" равен двум частям)
+    min-domain-parts: 2
+    # Требовать реальный TLD? (true/false)
+    # (Если установлено "true", то только известные TLD считаются ссылками или доменами)
+    require-real-tld: true
+
 logs:
   file:
     links:

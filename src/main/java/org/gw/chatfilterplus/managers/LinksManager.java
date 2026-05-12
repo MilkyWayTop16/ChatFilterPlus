@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class LinksManager {
@@ -22,6 +21,12 @@ public class LinksManager {
     private Pattern discordPattern;
     private Set<String> normalizedDomains;
     private String listFilterMode;
+
+    private Set<String> realTlds;
+    private Set<String> quickTriggers;
+    private int minDomainParts;
+    private boolean requireRealTld;
+    private boolean smartDetectionEnabled;
 
     private static final Pattern INVISIBLE_CHARS = Pattern.compile("[\\u200B\\u200C\\u200D\\u2060\\uFEFF\\u00A0\\u1680\\u180E\\u2000-\\u200F\\u2028\\u2029\\u202F\\u205F\\u3000]+");
 
@@ -42,6 +47,7 @@ public class LinksManager {
     private void load() {
         loadPatterns();
         loadDomains();
+        loadSmartDetection();
     }
 
     private void loadPatterns() {
@@ -77,20 +83,56 @@ public class LinksManager {
         this.listFilterMode = configManager.getLinksListFilterMode().toLowerCase();
     }
 
+    private void loadSmartDetection() {
+        smartDetectionEnabled = configManager.getLinksConfig().getBoolean("filter.smart-detection.enabled", true);
+
+        List<String> triggers = configManager.getLinksConfig().getStringList("filter.smart-detection.quick-triggers");
+        quickTriggers = new HashSet<>();
+        for (String t : triggers) {
+            if (t != null && !t.trim().isEmpty()) {
+                quickTriggers.add(t.toLowerCase().trim());
+            }
+        }
+
+        List<String> tldList = configManager.getLinksConfig().getStringList("filter.smart-detection.tlds");
+        realTlds = new HashSet<>();
+        for (String tld : tldList) {
+            if (tld != null && !tld.trim().isEmpty()) {
+                realTlds.add(tld.toLowerCase().trim());
+            }
+        }
+
+        minDomainParts = configManager.getLinksConfig().getInt("filter.smart-detection.min-domain-parts", 2);
+        requireRealTld = configManager.getLinksConfig().getBoolean("filter.smart-detection.require-real-tld", true);
+    }
+
     public boolean isLinkAllowed(String originalLink) {
+        if (originalLink == null || originalLink.isEmpty()) return true;
+
+        if (smartDetectionEnabled) {
+            if (!quickLooksLikeLink(originalLink)) {
+                return true;
+            }
+        }
+
         String normalized = normalizeForDetection(originalLink);
         if (normalized.isEmpty()) return true;
 
-        boolean looksLikeLink = ipPattern.matcher(normalized).find() ||
-                linkPattern.matcher(normalized).find() ||
-                discordPattern.matcher(normalized).find() ||
-                DOMAIN_PATTERN.matcher(normalized).find();
+        if (smartDetectionEnabled) {
+            if (!isValidLinkAfterNormalization(normalized)) {
+                return true;
+            }
+        } else {
+            boolean looksLikeLink = ipPattern.matcher(normalized).find() ||
+                    linkPattern.matcher(normalized).find() ||
+                    discordPattern.matcher(normalized).find() ||
+                    DOMAIN_PATTERN.matcher(normalized).find();
 
-        if (!looksLikeLink && normalized.contains(".") && normalized.length() > 5) {
-            looksLikeLink = true;
+            if (!looksLikeLink && normalized.contains(".") && normalized.length() > 5) {
+                looksLikeLink = true;
+            }
+            if (!looksLikeLink) return true;
         }
-
-        if (!looksLikeLink) return true;
 
         if (!configManager.isLinksListFilterEnabled()) {
             return false;
@@ -106,6 +148,30 @@ public class LinksManager {
         } else {
             return !inList;
         }
+    }
+
+    private boolean quickLooksLikeLink(String text) {
+        String lower = text.toLowerCase();
+        for (String trigger : quickTriggers) {
+            if (lower.contains(trigger)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isValidLinkAfterNormalization(String normalized) {
+        String[] parts = normalized.split("\\.");
+        if (parts.length < minDomainParts) return false;
+
+        if (requireRealTld) {
+            String lastPart = parts[parts.length - 1];
+            if (!realTlds.contains(lastPart)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private String normalizeForDetection(String text) {
@@ -126,21 +192,18 @@ public class LinksManager {
 
     private String normalizeHomoglyphs(String text) {
         return text
-                // Latin small caps
                 .replace("ᴍ", "m").replace("ᴄ", "c").replace("ʀ", "r").replace("ᴇ", "e")
                 .replace("ᴀ", "a").replace("ʟ", "l").replace("ʏ", "y").replace("ᴡ", "w")
                 .replace("ᴏ", "o").replace("ᴜ", "u").replace("ᴅ", "d").replace("ɴ", "n")
                 .replace("ᴛ", "t").replace("ꜱ", "s").replace("ɪ", "i").replace("ʙ", "b")
                 .replace("ɢ", "g").replace("ʜ", "h").replace("ᴋ", "k").replace("ᴘ", "p")
                 .replace("ꜰ", "f").replace("ᴠ", "v").replace("ᴢ", "z")
-                // Cyrillic confusables + транслит
                 .replace("с", "c").replace("а", "a").replace("е", "e").replace("о", "o")
                 .replace("р", "p").replace("х", "x").replace("у", "y").replace("к", "k")
                 .replace("м", "m").replace("т", "t").replace("н", "h").replace("в", "v")
                 .replace("г", "g").replace("д", "d").replace("л", "l").replace("п", "n")
                 .replace("ф", "f").replace("и", "i").replace("й", "i").replace("ь", "")
                 .replace("ъ", "").replace("э", "e").replace("ю", "u").replace("я", "ya")
-                // Fullwidth
                 .replace("ａ", "a").replace("ｂ", "b").replace("ｃ", "c").replace("ｄ", "d")
                 .replace("ｅ", "e").replace("ｆ", "f").replace("ｇ", "g").replace("ｈ", "h")
                 .replace("ｉ", "i").replace("ｊ", "j").replace("ｋ", "k").replace("ｌ", "l")

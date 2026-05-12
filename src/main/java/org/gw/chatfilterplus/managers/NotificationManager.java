@@ -1,6 +1,7 @@
 package org.gw.chatfilterplus.managers;
 
 import lombok.Getter;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.gw.chatfilterplus.ChatFilterPlus;
 
@@ -39,74 +40,31 @@ public class NotificationManager {
     }
 
     public void notifyPlayer(Player player, FilterType type, String firstItem) {
-        if (type == FilterType.BAD_WORDS) {
-            configManager.executeActionsFromBadWords(player, "player", null);
-        } else if (type == FilterType.LINKS) {
-            configManager.executeActionsFromLinks(player, "player", null);
-        } else if (type == FilterType.CAPS) {
-            configManager.executeActionsFromCaps(player, "player", null);
-        } else if (type == FilterType.BLOCKED_WORDS) {
-            configManager.executeActionsFromBlockedWords(player, "player", null);
-        } else if (type == FilterType.ANTI_SPAM) {
-            configManager.executeActionsFromAntiSpam(player, "player", null);
-        }
+        executeActionsForType(type, player, "player", null);
     }
 
     public void notifyAdmins(Player player, FilterType type, List<String> items) {
         Map<String, String> placeholders = createPlaceholders(player, items);
 
-        if (type == FilterType.BAD_WORDS) {
-            configManager.executeActionsFromBadWords(null, "admin", placeholders);
-        } else if (type == FilterType.LINKS) {
-            configManager.executeActionsFromLinks(null, "admin", placeholders);
-        } else if (type == FilterType.CAPS) {
-            configManager.executeActionsFromCaps(null, "admin", placeholders);
-        } else if (type == FilterType.BLOCKED_WORDS) {
-            configManager.executeActionsFromBlockedWords(null, "admin", placeholders);
-        } else if (type == FilterType.ANTI_SPAM) {
-            configManager.executeActionsFromAntiSpam(null, "admin", placeholders);
+        for (Player admin : Bukkit.getOnlinePlayers()) {
+            if (!isNotificationsEnabled(admin)) continue;
+            if (configManager.isAdminSelfNotifyEnabled() && admin.equals(player)) continue;
+
+            executeActionsForType(type, admin, "admin", placeholders);
         }
     }
 
     public void notifyConsole(Player player, FilterType type, List<String> items) {
         Map<String, String> placeholders = createPlaceholders(player, items);
-
-        if (type == FilterType.BAD_WORDS) {
-            configManager.executeActionsFromBadWords(null, "console", placeholders);
-        } else if (type == FilterType.LINKS) {
-            configManager.executeActionsFromLinks(null, "console", placeholders);
-        } else if (type == FilterType.CAPS) {
-            configManager.executeActionsFromCaps(null, "console", placeholders);
-        } else if (type == FilterType.BLOCKED_WORDS) {
-            configManager.executeActionsFromBlockedWords(null, "console", placeholders);
-        } else if (type == FilterType.ANTI_SPAM) {
-            configManager.executeActionsFromAntiSpam(null, "console", placeholders);
-        }
+        executeActionsForType(type, null, "console", placeholders);
     }
 
     public void notifyDiscord(Player player, FilterType type, List<String> items) {
         Map<String, String> placeholders = createPlaceholders(player, items);
         placeholders.put("original-message", items.isEmpty() ? "[BLOCKED]" : items.get(0));
 
-        String template = "";
-        String webhookUrl = "";
-
-        if (type == FilterType.BAD_WORDS) {
-            template = configManager.getBadWordsConfig().getString("notifications.bad-words.discord.message", "");
-            webhookUrl = configManager.getBadWordsConfig().getString("notifications.bad-words.discord.webhook-url", "");
-        } else if (type == FilterType.LINKS) {
-            template = configManager.getLinksConfig().getString("notifications.links.discord.message", "");
-            webhookUrl = configManager.getLinksConfig().getString("notifications.links.discord.webhook-url", "");
-        } else if (type == FilterType.CAPS) {
-            template = configManager.getCapsConfig().getString("notifications.caps.discord.message", "");
-            webhookUrl = configManager.getCapsConfig().getString("notifications.caps.discord.webhook-url", "");
-        } else if (type == FilterType.BLOCKED_WORDS) {
-            template = configManager.getBlockedWordsConfig().getString("notifications.blocked-words.discord.message", "");
-            webhookUrl = configManager.getBlockedWordsConfig().getString("notifications.blocked-words.discord.webhook-url", "");
-        } else if (type == FilterType.ANTI_SPAM) {
-            template = configManager.getAntiSpamConfig().getString("notifications.anti-spam.discord.message", "");
-            webhookUrl = configManager.getAntiSpamConfig().getString("notifications.anti-spam.discord.webhook-url", "");
-        }
+        String template = getDiscordTemplate(type);
+        String webhookUrl = getDiscordWebhook(type);
 
         if (template.isEmpty() || webhookUrl.isEmpty()) return;
 
@@ -116,6 +74,36 @@ public class NotificationManager {
         }
 
         sendDiscordWebhook(webhookUrl, message);
+    }
+
+    private void executeActionsForType(FilterType type, Player player, String subPath, Map<String, String> placeholders) {
+        switch (type) {
+            case BAD_WORDS -> configManager.executeActionsFromBadWords(player, subPath, placeholders);
+            case LINKS -> configManager.executeActionsFromLinks(player, subPath, placeholders);
+            case CAPS -> configManager.executeActionsFromCaps(player, subPath, placeholders);
+            case BLOCKED_WORDS -> configManager.executeActionsFromBlockedWords(player, subPath, placeholders);
+            case ANTI_SPAM -> configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
+        }
+    }
+
+    private String getDiscordTemplate(FilterType type) {
+        return switch (type) {
+            case BAD_WORDS -> configManager.getBadWordsConfig().getString("notifications.bad-words.discord.message", "");
+            case LINKS -> configManager.getLinksConfig().getString("notifications.links.discord.message", "");
+            case CAPS -> configManager.getCapsConfig().getString("notifications.caps.discord.message", "");
+            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getString("notifications.blocked-words.discord.message", "");
+            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("notifications.anti-spam.discord.message", "");
+        };
+    }
+
+    private String getDiscordWebhook(FilterType type) {
+        return switch (type) {
+            case BAD_WORDS -> configManager.getBadWordsConfig().getString("notifications.bad-words.discord.webhook-url", "");
+            case LINKS -> configManager.getLinksConfig().getString("notifications.links.discord.webhook-url", "");
+            case CAPS -> configManager.getCapsConfig().getString("notifications.caps.discord.webhook-url", "");
+            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getString("notifications.blocked-words.discord.webhook-url", "");
+            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("notifications.anti-spam.discord.webhook-url", "");
+        };
     }
 
     private Map<String, String> createPlaceholders(Player player, List<String> items) {

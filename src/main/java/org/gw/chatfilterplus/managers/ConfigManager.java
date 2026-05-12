@@ -8,6 +8,7 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.HexColors;
+import org.gw.chatfilterplus.utils.PlaceholderUtil;
 
 import java.io.File;
 import java.util.*;
@@ -99,10 +100,14 @@ public class ConfigManager {
     private List<String> antiSpamExceptionPlayers;
     private List<String> antiSpamExceptionGroups;
 
-    private final Map<String, List<String>> actionCache = new ConcurrentHashMap<>();
+    private boolean adminSelfNotifyEnabled;
+
+    private final Map<String, List<ParsedAction>> parsedActionCache = new ConcurrentHashMap<>();
 
     private static final Pattern RETENTION_PATTERN = Pattern.compile("(\\d+)([smhdwy])");
     private final Object reloadLock = new Object();
+
+    private record ParsedAction(String type, String content) {}
 
     public ConfigManager(ChatFilterPlus plugin) {
         this.plugin = plugin;
@@ -124,8 +129,43 @@ public class ConfigManager {
             loadAntiSpamConfig();
             loadCommonSettings();
             cacheHotSettings();
-            actionCache.clear();
+            parsedActionCache.clear();
+            preParseAllActions();
         }
+    }
+
+    private void preParseAllActions() {
+        preParseSection("main", mainConfig.getConfigurationSection("actions"));
+        preParseSection("badwords", badWordsConfig.getConfigurationSection("notifications.bad-words"));
+        preParseSection("links", linksConfig.getConfigurationSection("notifications.links"));
+        preParseSection("caps", capsConfig.getConfigurationSection("notifications.caps"));
+        preParseSection("blockedwords", blockedWordsConfig.getConfigurationSection("notifications.blocked-words"));
+        preParseSection("antispam", antiSpamConfig.getConfigurationSection("notifications.anti-spam"));
+    }
+
+    private void preParseSection(String prefix, org.bukkit.configuration.ConfigurationSection section) {
+        if (section == null) return;
+        for (String key : section.getKeys(false)) {
+            if (section.isList(key)) {
+                String cacheKey = prefix + "." + key;
+                List<String> raw = section.getStringList(key);
+                List<ParsedAction> parsed = new ArrayList<>(raw.size());
+                for (String line : raw) {
+                    ParsedAction pa = parseActionLine(line);
+                    if (pa != null) parsed.add(pa);
+                }
+                parsedActionCache.put(cacheKey, parsed);
+            } else if (section.isConfigurationSection(key)) {
+                preParseSection(prefix + "." + key, section.getConfigurationSection(key));
+            }
+        }
+    }
+
+    private ParsedAction parseActionLine(String actionLine) {
+        if (actionLine == null || !actionLine.startsWith("[")) return null;
+        int end = actionLine.indexOf("]");
+        if (end == -1) return null;
+        return new ParsedAction(actionLine.substring(1, end).toLowerCase(), actionLine.substring(end + 1).trim());
     }
 
     private void loadCommonSettings() {
@@ -140,6 +180,8 @@ public class ConfigManager {
         compatibilityAggressiveMode = mainConfig.getBoolean("settings.compatibility.aggressive-mode", false);
         commandFilteringEnabled = mainConfig.getBoolean("settings.command-filtering.enabled", true);
         commandFilteringCommands = mainConfig.getStringList("settings.command-filtering.commands");
+
+        adminSelfNotifyEnabled = mainConfig.getBoolean("settings.admin-self-notify.enabled", true);
 
         antiSpamEnabled = antiSpamConfig.getBoolean("filter.anti-spam.enabled", true);
         generalCooldownEnabled = antiSpamConfig.getBoolean("filter.anti-spam.general-cooldown.enabled", true);
@@ -242,7 +284,6 @@ public class ConfigManager {
 
     private long parseRetentionPeriod(String period) {
         if (period == null || period.trim().isEmpty()) return 5 * 60 * 1000L;
-
         long total = 0;
         java.util.regex.Matcher matcher = RETENTION_PATTERN.matcher(period.toLowerCase());
         while (matcher.find()) {
@@ -261,38 +302,9 @@ public class ConfigManager {
         return total == 0 ? 5 * 60 * 1000L : total;
     }
 
-    public List<String> getActions(String path) {
-        return actionCache.computeIfAbsent("main." + path, k -> mainConfig.getStringList("actions." + path));
-    }
-
-    public List<String> getBadWordsActions(String subPath) {
-        return actionCache.computeIfAbsent("badwords." + subPath, k -> badWordsConfig.getStringList("notifications.bad-words." + subPath));
-    }
-
-    public List<String> getLinksActions(String subPath) {
-        return actionCache.computeIfAbsent("links." + subPath, k -> linksConfig.getStringList("notifications.links." + subPath));
-    }
-
-    public List<String> getCapsActions(String subPath) {
-        return actionCache.computeIfAbsent("caps." + subPath, k -> capsConfig.getStringList("notifications.caps." + subPath));
-    }
-
-    public List<String> getBlockedWordsActions(String subPath) {
-        return actionCache.computeIfAbsent("blockedwords." + subPath, k -> blockedWordsConfig.getStringList("notifications.blocked-words." + subPath));
-    }
-
-    public void executeActions(Player player, String path) {
-        executeActions(player, path, null);
-    }
-
-    public void executeActions(Player player, String path, Map<String, String> placeholders) {
-        List<String> actions = getActions(path);
-        if (actions == null || actions.isEmpty()) return;
-        executeActionList(player, actions, placeholders);
-    }
-
     public void executeActions(CommandSender sender, String path) {
-        executeActions(sender, path, null);
+        Player player = sender instanceof Player p ? p : null;
+        executeActions(player, path, null);
     }
 
     public void executeActions(CommandSender sender, String path, Map<String, String> placeholders) {
@@ -300,78 +312,87 @@ public class ConfigManager {
         executeActions(player, path, placeholders);
     }
 
+    public List<ParsedAction> getParsedActions(String path) {
+        if (path == null) return List.of();
+        String key = path.startsWith("main.") ? path : "main." + path;
+        return parsedActionCache.getOrDefault(key, List.of());
+    }
+
+    public List<ParsedAction> getBadWordsParsedActions(String subPath) {
+        return parsedActionCache.getOrDefault("badwords." + subPath, List.of());
+    }
+
+    public List<ParsedAction> getLinksParsedActions(String subPath) {
+        return parsedActionCache.getOrDefault("links." + subPath, List.of());
+    }
+
+    public List<ParsedAction> getCapsParsedActions(String subPath) {
+        return parsedActionCache.getOrDefault("caps." + subPath, List.of());
+    }
+
+    public List<ParsedAction> getBlockedWordsParsedActions(String subPath) {
+        return parsedActionCache.getOrDefault("blockedwords." + subPath, List.of());
+    }
+
+    public List<ParsedAction> getAntiSpamParsedActions(String subPath) {
+        if (subPath == null) return List.of();
+        List<ParsedAction> direct = parsedActionCache.get("antispam." + subPath);
+        if (direct != null && !direct.isEmpty()) return direct;
+        return parsedActionCache.getOrDefault("antispam.player." + subPath, List.of());
+    }
+
+    public void executeActions(Player player, String path, Map<String, String> placeholders) {
+        executeParsedActionList(player, getParsedActions(path), placeholders);
+    }
+
     public void executeActionsFromBadWords(Player player, String subPath, Map<String, String> placeholders) {
-        List<String> actions = getBadWordsActions(subPath);
-        if (actions == null || actions.isEmpty()) return;
-        executeActionList(player, actions, placeholders);
+        executeParsedActionList(player, getBadWordsParsedActions(subPath), placeholders);
     }
 
     public void executeActionsFromLinks(Player player, String subPath, Map<String, String> placeholders) {
-        List<String> actions = getLinksActions(subPath);
-        if (actions == null || actions.isEmpty()) return;
-        executeActionList(player, actions, placeholders);
+        executeParsedActionList(player, getLinksParsedActions(subPath), placeholders);
     }
 
     public void executeActionsFromCaps(Player player, String subPath, Map<String, String> placeholders) {
-        List<String> actions = getCapsActions(subPath);
-        if (actions == null || actions.isEmpty()) return;
-        executeActionList(player, actions, placeholders);
+        executeParsedActionList(player, getCapsParsedActions(subPath), placeholders);
     }
 
     public void executeActionsFromBlockedWords(Player player, String subPath, Map<String, String> placeholders) {
-        List<String> actions = getBlockedWordsActions(subPath);
-        if (actions == null || actions.isEmpty()) return;
-        executeActionList(player, actions, placeholders);
+        executeParsedActionList(player, getBlockedWordsParsedActions(subPath), placeholders);
     }
 
     public void executeActionsFromAntiSpam(Player player, String subPath, Map<String, String> placeholders) {
-        List<String> actions = actionCache.computeIfAbsent("antispam." + subPath, k -> antiSpamConfig.getStringList("notifications.anti-spam." + subPath));
-        if (actions == null || actions.isEmpty()) return;
-        executeActionList(player, actions, placeholders);
+        executeParsedActionList(player, getAntiSpamParsedActions(subPath), placeholders);
     }
 
-    private void executeActionList(Player player, List<String> actions, Map<String, String> placeholders) {
-        Map<String, String> ph = new HashMap<>(placeholders != null ? placeholders : Collections.emptyMap());
-        if (player != null) ph.put("player", player.getName());
+    private void executeParsedActionList(Player player, List<ParsedAction> actions, Map<String, String> placeholders) {
+        if (actions.isEmpty()) return;
 
-        for (String action : actions) {
-            String processed = action;
-            for (Map.Entry<String, String> entry : ph.entrySet()) {
-                processed = processed.replace("{" + entry.getKey() + "}", entry.getValue());
+        Map<String, String> ph = new HashMap<>(placeholders != null ? placeholders : Collections.emptyMap());
+        if (player != null && !ph.containsKey("player")) ph.put("player", player.getName());
+
+        for (ParsedAction action : actions) {
+            String content = action.content();
+            for (Map.Entry<String, String> e : ph.entrySet()) {
+                content = content.replace("{" + e.getKey() + "}", e.getValue());
             }
-            parseAndExecuteAction(player, processed.trim());
+            content = PlaceholderUtil.parse(player, content);
+            executeParsedAction(player, action.type(), content);
         }
     }
 
-    private void parseAndExecuteAction(Player player, String actionLine) {
-        if (!actionLine.startsWith("[")) return;
-
-        int end = actionLine.indexOf("]");
-        if (end == -1) return;
-
-        String type = actionLine.substring(1, end).toLowerCase();
-        String content = actionLine.substring(end + 1).trim();
-
+    private void executeParsedAction(Player player, String type, String content) {
         try {
             switch (type) {
-                case "message" -> {
-                    if (player != null) HexColors.sendMessage(player, content);
-                    else plugin.console(content);
-                }
-                case "message-console" -> {
-                    if (player != null) plugin.console(content);
-                }
+                case "message" -> { if (player != null) HexColors.sendMessage(player, content); else plugin.console(content); }
+                case "message-console" -> plugin.console(content);
                 case "broadcast" -> Bukkit.broadcastMessage(HexColors.translate(content));
                 case "sound" -> executeSound(player, content);
                 case "title" -> executeTitle(player, content, false);
                 case "subtitle" -> executeTitle(player, content, true);
-                case "actionbar" -> {
-                    if (player != null) player.sendActionBar(HexColors.translateToComponent(content));
-                }
+                case "actionbar" -> { if (player != null) player.sendActionBar(HexColors.translateToComponent(content)); }
                 case "console-command" -> plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), content);
-                case "player-command" -> {
-                    if (player != null) plugin.getServer().dispatchCommand(player, content);
-                }
+                case "player-command" -> { if (player != null) plugin.getServer().dispatchCommand(player, content); }
                 case "effect" -> executePotionEffect(player, content);
                 case "teleport" -> executeTeleport(player, content);
                 case "give-item" -> executeGiveItem(player, content);
@@ -397,11 +418,9 @@ public class ConfigManager {
 
     private void executeTitle(Player player, String content, boolean isSubtitle) {
         if (player == null) return;
-
         try {
             String[] parts = content.split(";", 4);
             String rawText = parts[0].trim();
-
             int fadeIn = parts.length > 1 ? parseIntSafe(parts[1], 10) : 10;
             int stay = parts.length > 2 ? parseIntSafe(parts[2], 70) : 70;
             int fadeOut = parts.length > 3 ? parseIntSafe(parts[3], 20) : 20;
@@ -414,34 +433,19 @@ public class ConfigManager {
 
             if (rawText.contains("\n")) {
                 String[] lines = rawText.split("\n", 2);
-
-                net.kyori.adventure.text.Component titleComp = HexColors.translateToComponent(lines[0]);
-                net.kyori.adventure.text.Component subtitleComp = HexColors.translateToComponent(lines[1]);
-
-                if (isSubtitle) {
-                    player.showTitle(net.kyori.adventure.title.Title.title(
-                            net.kyori.adventure.text.Component.empty(),
-                            subtitleComp,
-                            times
-                    ));
-                } else {
-                    player.showTitle(net.kyori.adventure.title.Title.title(
-                            titleComp,
-                            subtitleComp,
-                            times
-                    ));
+                player.sendTitlePart(net.kyori.adventure.title.TitlePart.TITLE, HexColors.translateToComponent(lines[0]));
+                if (lines.length > 1) {
+                    player.sendTitlePart(net.kyori.adventure.title.TitlePart.SUBTITLE, HexColors.translateToComponent(lines[1]));
                 }
             } else {
                 net.kyori.adventure.text.Component comp = HexColors.translateToComponent(rawText);
-
-                player.sendTitlePart(net.kyori.adventure.title.TitlePart.TIMES, times);
-
                 if (isSubtitle) {
                     player.sendTitlePart(net.kyori.adventure.title.TitlePart.SUBTITLE, comp);
                 } else {
                     player.sendTitlePart(net.kyori.adventure.title.TitlePart.TITLE, comp);
                 }
             }
+            player.sendTitlePart(net.kyori.adventure.title.TitlePart.TIMES, times);
         } catch (Exception e) {
             plugin.console("&#FF5D00Ошибка выполнения тайтла: " + content);
         }
@@ -490,11 +494,7 @@ public class ConfigManager {
     }
 
     private int parseIntSafe(String value, int defaultValue) {
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            return defaultValue;
-        }
+        try { return Integer.parseInt(value); } catch (NumberFormatException e) { return defaultValue; }
     }
 
     public List<String> getSafeWords() { return badWordsConfig.getStringList("safe-words"); }

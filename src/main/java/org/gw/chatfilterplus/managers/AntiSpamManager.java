@@ -41,15 +41,13 @@ public class AntiSpamManager {
         AntiSpamResult floodResult = checkCharacterFlood(player, message, now);
         if (floodResult != null) return floodResult;
 
-        synchronized (history) {
-            AntiSpamResult result = checkSimilarMessage(history, message, now);
-            if (result != null) return result;
+        AntiSpamResult result = checkSimilarMessage(history, message, now);
+        if (result != null) return result;
 
-            result = checkGeneralCooldown(history, message, now);
-            if (result != null) return result;
+        result = checkGeneralCooldown(history, message, now);
+        if (result != null) return result;
 
-            addToHistory(history, message, now);
-        }
+        addToHistory(history, message, now);
 
         return null;
     }
@@ -107,15 +105,24 @@ public class AntiSpamManager {
     }
 
     private double calculateJaccardSimilarity(String s1, String s2) {
+        if (s1.isEmpty() || s2.isEmpty()) return 0.0;
+
         String[] words1 = s1.split("\\s+");
         String[] words2 = s2.split("\\s+");
-        java.util.Set<String> set1 = new java.util.HashSet<>(java.util.Arrays.asList(words1));
-        java.util.Set<String> set2 = new java.util.HashSet<>(java.util.Arrays.asList(words2));
+
+        java.util.Set<String> set1 = new java.util.HashSet<>(words1.length);
+        for (String w : words1) if (!w.isEmpty()) set1.add(w);
+
+        java.util.Set<String> set2 = new java.util.HashSet<>(words2.length);
+        for (String w : words2) if (!w.isEmpty()) set2.add(w);
+
+        if (set1.isEmpty() || set2.isEmpty()) return 0.0;
+
         java.util.Set<String> intersection = new java.util.HashSet<>(set1);
         intersection.retainAll(set2);
-        java.util.Set<String> union = new java.util.HashSet<>(set1);
-        union.addAll(set2);
-        return union.isEmpty() ? 0 : (double) intersection.size() / union.size();
+
+        int unionSize = set1.size() + set2.size() - intersection.size();
+        return unionSize == 0 ? 0.0 : (double) intersection.size() / unionSize;
     }
 
     private int calculateLevenshteinDistance(String s1, String s2) {
