@@ -6,16 +6,7 @@ import org.bukkit.entity.Player;
 
 public class PlaceholderUtil {
 
-    private static boolean placeholderAPIAvailable;
-
-    static {
-        try {
-            Class.forName("me.clip.placeholderapi.PlaceholderAPI");
-            placeholderAPIAvailable = Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null;
-        } catch (ClassNotFoundException e) {
-            placeholderAPIAvailable = false;
-        }
-    }
+    private static final boolean placeholderAPIAvailable = Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null;
 
     public static String parse(Player player, String text) {
         if (text == null || text.isEmpty()) return text;

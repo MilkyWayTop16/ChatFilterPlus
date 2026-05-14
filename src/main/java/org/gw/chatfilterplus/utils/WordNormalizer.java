@@ -1,7 +1,6 @@
 package org.gw.chatfilterplus.utils;
 
 import org.gw.chatfilterplus.ChatFilterPlus;
-import org.gw.chatfilterplus.managers.ConfigManager;
 
 import java.text.Normalizer;
 import java.util.List;
@@ -15,15 +14,12 @@ public class WordNormalizer {
     private static final Pattern REPEATED_CHARS = Pattern.compile("([аеёиоуыэюяa-z])\\1+", Pattern.CASE_INSENSITIVE);
 
     private static final int MAX_CACHE_SIZE = 8000;
-
     private static final Map<String, String> normalizationCache = new ConcurrentHashMap<>(MAX_CACHE_SIZE);
 
-    private final ConfigManager configManager;
     private final SafeWordsTrie safeWordsTrie;
 
     public WordNormalizer(ChatFilterPlus plugin) {
-        this.configManager = plugin.getConfigManager();
-        this.safeWordsTrie = new SafeWordsTrie(configManager.getSafeWords());
+        this.safeWordsTrie = new SafeWordsTrie(plugin.getConfigManager().getSafeWords());
     }
 
     public void reload(List<String> safeWords) {
@@ -32,8 +28,12 @@ public class WordNormalizer {
     }
 
     public static String normalize(String text, String filterLevel) {
-        if (text == null || text.trim().isEmpty() || text.length() < 3) {
+        if (text == null || text.length() < 3) {
             return text;
+        }
+
+        if ("low".equalsIgnoreCase(filterLevel)) {
+            return text.toLowerCase();
         }
 
         String cacheKey = text + ":" + filterLevel.toLowerCase();
@@ -43,10 +43,6 @@ public class WordNormalizer {
     private static String performNormalization(String text, String filterLevel) {
         String normalized = text.toLowerCase();
 
-        if ("low".equalsIgnoreCase(filterLevel)) {
-            return normalized;
-        }
-
         normalized = SPECIAL_CHARS.matcher(normalized).replaceAll("");
 
         if (normalized.length() < 3) {
@@ -54,7 +50,6 @@ public class WordNormalizer {
         }
 
         normalized = REPEATED_CHARS.matcher(normalized).replaceAll("$1");
-
         normalized = Normalizer.normalize(normalized, Normalizer.Form.NFKC);
 
         return normalized;
@@ -64,8 +59,8 @@ public class WordNormalizer {
         if (word == null || word.length() < 3) {
             return false;
         }
-        String noSpaces = word.toLowerCase().replaceAll("[^\\p{L}\\p{N}]", "");
-        return safeWordsTrie.contains(noSpaces);
+        String cleaned = SPECIAL_CHARS.matcher(word.toLowerCase()).replaceAll("");
+        return safeWordsTrie.contains(cleaned);
     }
 
     private static class SafeWordsTrie {

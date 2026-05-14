@@ -22,13 +22,12 @@ public class NotificationManager {
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
     private final HttpClient httpClient;
-    private final Map<UUID, Boolean> notificationsEnabled;
+    private final Map<UUID, Boolean> notificationsEnabled = new ConcurrentHashMap<>();
 
     public NotificationManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
         this.configManager = configManager;
         this.httpClient = HttpClient.newHttpClient();
-        this.notificationsEnabled = new ConcurrentHashMap<>();
     }
 
     public boolean isNotificationsEnabled(Player player) {
@@ -108,7 +107,7 @@ public class NotificationManager {
 
     private Map<String, String> createPlaceholders(Player player, List<String> items) {
         Map<String, String> ph = new java.util.HashMap<>();
-        ph.put("player", player.getName());
+        ph.put("player", player != null ? player.getName() : "Console");
         ph.put("words", String.join(", ", items));
         ph.put("links", String.join(", ", items));
         ph.put("reason", items.isEmpty() ? "" : items.get(0));
@@ -124,9 +123,7 @@ public class NotificationManager {
                 .replace("\"", "\\\"")
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
-                .replace("\t", "\\t")
-                .replace("\b", "\\b")
-                .replace("\f", "\\f");
+                .replace("\t", "\\t");
 
         String json = "{\"content\":\"" + escaped + "\"}";
         HttpRequest request = HttpRequest.newBuilder()

@@ -6,9 +6,7 @@ import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.AntiSpamResult;
 import org.gw.chatfilterplus.utils.WordNormalizer;
 
-import java.util.Deque;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
@@ -31,12 +29,11 @@ public class AntiSpamManager {
 
     public AntiSpamResult checkSpam(Player player, String message) {
         if (!configManager.isAntiSpamEnabled()) return null;
-        if (message == null || message.isEmpty()) return null;
 
         UUID uuid = player.getUniqueId();
         long now = System.currentTimeMillis();
 
-        Deque<RecentMessage> history = playerHistory.computeIfAbsent(uuid, k -> new ConcurrentLinkedDeque<>());
+        Deque<RecentMessage> history = playerHistory.computeIfAbsent(uuid, k -> new ArrayDeque<>());
 
         AntiSpamResult floodResult = checkCharacterFlood(player, message, now);
         if (floodResult != null) return floodResult;
@@ -48,7 +45,6 @@ public class AntiSpamManager {
         if (result != null) return result;
 
         addToHistory(history, message, now);
-
         return null;
     }
 
@@ -110,15 +106,21 @@ public class AntiSpamManager {
         String[] words1 = s1.split("\\s+");
         String[] words2 = s2.split("\\s+");
 
-        java.util.Set<String> set1 = new java.util.HashSet<>(words1.length);
-        for (String w : words1) if (!w.isEmpty()) set1.add(w);
+        Set<String> set1 = new HashSet<>();
+        for (String w : words1) {
+            String cleaned = w.replaceAll("[^\\p{L}\\p{N}]", "");
+            if (!cleaned.isEmpty()) set1.add(cleaned);
+        }
 
-        java.util.Set<String> set2 = new java.util.HashSet<>(words2.length);
-        for (String w : words2) if (!w.isEmpty()) set2.add(w);
+        Set<String> set2 = new HashSet<>();
+        for (String w : words2) {
+            String cleaned = w.replaceAll("[^\\p{L}\\p{N}]", "");
+            if (!cleaned.isEmpty()) set2.add(cleaned);
+        }
 
         if (set1.isEmpty() || set2.isEmpty()) return 0.0;
 
-        java.util.Set<String> intersection = new java.util.HashSet<>(set1);
+        Set<String> intersection = new HashSet<>(set1);
         intersection.retainAll(set2);
 
         int unionSize = set1.size() + set2.size() - intersection.size();
@@ -175,8 +177,7 @@ public class AntiSpamManager {
         long now = System.currentTimeMillis();
 
         lastCharacterFlood.entrySet().removeIf(entry ->
-                Bukkit.getPlayer(entry.getKey()) == null ||
-                        now - entry.getValue() > ENTRY_LIFETIME_MILLIS);
+                Bukkit.getPlayer(entry.getKey()) == null || now - entry.getValue() > ENTRY_LIFETIME_MILLIS);
 
         playerHistory.entrySet().removeIf(entry -> {
             if (Bukkit.getPlayer(entry.getKey()) == null) return true;

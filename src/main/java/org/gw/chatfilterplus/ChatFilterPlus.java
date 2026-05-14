@@ -2,6 +2,8 @@ package org.gw.chatfilterplus;
 
 import lombok.Getter;
 import org.bukkit.Bukkit;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.gw.chatfilterplus.commands.CommandsHandler;
 import org.gw.chatfilterplus.commands.CommandsTabCompleter;
@@ -76,24 +78,24 @@ public class ChatFilterPlus extends JavaPlugin {
         console("&#00FF5A◆ ChatFilterPlus &f| Регистрация &#00FF5Aсобытий &fи &#00FF5Aкоманд...");
 
         String priorityStr = configManager.getCompatibilityEventPriority().toUpperCase();
-        org.bukkit.event.EventPriority eventPriority;
+        EventPriority eventPriority;
         try {
-            eventPriority = org.bukkit.event.EventPriority.valueOf(priorityStr);
+            eventPriority = EventPriority.valueOf(priorityStr);
         } catch (IllegalArgumentException e) {
-            eventPriority = org.bukkit.event.EventPriority.LOWEST;
+            eventPriority = EventPriority.LOWEST;
         }
 
-        getServer().getPluginManager().registerEvent(
-                org.bukkit.event.player.PlayerCommandPreprocessEvent.class,
+        Bukkit.getPluginManager().registerEvent(
+                PlayerCommandPreprocessEvent.class,
                 new CommandFilterListener(this, chatManager),
                 eventPriority,
-                (listener, event) -> ((CommandFilterListener) listener).onCommandPreprocess((org.bukkit.event.player.PlayerCommandPreprocessEvent) event),
+                (listener, event) -> ((CommandFilterListener) listener).onCommandPreprocess((PlayerCommandPreprocessEvent) event),
                 this,
                 !configManager.isCompatibilityAggressiveMode()
         );
 
-        getServer().getPluginManager().registerEvents(new CommandSendListener(), this);
-        getServer().getPluginManager().registerEvents(chatManager, this);
+        Bukkit.getPluginManager().registerEvents(new CommandSendListener(), this);
+        Bukkit.getPluginManager().registerEvents(chatManager, this);
 
         getCommand("chatfilterplus").setExecutor(new CommandsHandler(
                 this,
@@ -110,7 +112,7 @@ public class ChatFilterPlus extends JavaPlugin {
 
         console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aсистемы проверки &fобновлений...");
         updateChecker = new UpdateChecker(this);
-        getServer().getPluginManager().registerEvents(updateChecker, this);
+        Bukkit.getPluginManager().registerEvents(updateChecker, this);
 
         return true;
     }

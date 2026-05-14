@@ -30,31 +30,32 @@ public class WordsManager {
 
         String filterLevel = configManager.getBadWordsFilterLevel();
         List<String> badWordsList = configManager.getBadWordsList();
+
         List<String> sortedWords = new ArrayList<>(badWordsList);
         sortedWords.sort((a, b) -> Integer.compare(b.length(), a.length()));
 
         for (String word : sortedWords) {
-            if (word == null || word.trim().isEmpty()) continue;
             try {
-                Pattern pattern = PatternFactory.createPattern(word.trim(), filterLevel);
-                wordsMap.put(pattern, word.trim());
+                Pattern pattern = PatternFactory.createPattern(word, filterLevel);
+                wordsMap.put(pattern, word);
             } catch (Exception e) {
                 plugin.console("&#FF5D00Ошибка создания паттерна для слова: " + word);
             }
         }
+
         plugin.log("Загружено &#ffff00" + wordsMap.size() + " &fплохих слов (уровень фильтра: &#ffff00" + filterLevel + "&f)");
     }
 
     public void reloadSafeWords() {
-        plugin.getWordNormalizer().reload(getSafeWords());
+        plugin.getWordNormalizer().reload(configManager.getSafeWords());
+    }
+
+    public List<String> getBadWordsList() {
+        return configManager.getBadWordsList();
     }
 
     public List<String> getSafeWords() {
         return configManager.getSafeWords();
-    }
-
-    public List<String> getBadWordsList() {
-        return new ArrayList<>(wordsMap.values());
     }
 
     public List<String> getBlockedWordsList() {
@@ -64,26 +65,27 @@ public class WordsManager {
     public boolean addBadWord(CommandSender sender, String word, String replacement) {
         if (word == null || word.trim().isEmpty()) return false;
 
+        String trimmed = word.trim();
         FileConfiguration badWordsConfig = configManager.getBadWordsConfig();
-        List<String> badWordsList = new ArrayList<>(badWordsConfig.getStringList("bad-words"));
+        List<String> badWordsList = badWordsConfig.getStringList("bad-words");
 
-        if (badWordsList.contains(word)) {
-            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-word-already-exists", "").replace("{word}", word));
+        if (badWordsList.contains(trimmed)) {
+            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-word-already-exists", "").replace("{word}", trimmed));
             return false;
         }
 
-        badWordsList.add(word);
+        badWordsList.add(trimmed);
         badWordsConfig.set("bad-words", badWordsList);
 
         try {
             badWordsConfig.save(new File(plugin.getDataFolder(), "bad-words.yml"));
             loadWords();
-            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-bad-word-success", "").replace("{word}", word));
-            plugin.log("Добавлено плохое слово &#ffff00" + word);
+            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-bad-word-success", "").replace("{word}", trimmed));
+            plugin.log("Добавлено плохое слово &#ffff00" + trimmed);
             return true;
         } catch (Exception e) {
-            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-word-failure", "").replace("{word}", word));
-            plugin.console("Ошибка при добавлении плохого слова &#ffff00" + word);
+            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-word-failure", "").replace("{word}", trimmed));
+            plugin.console("Ошибка при добавлении плохого слова &#ffff00" + trimmed);
             return false;
         }
     }
@@ -91,37 +93,39 @@ public class WordsManager {
     public void addSafeWord(CommandSender sender, String word) {
         if (word == null || word.trim().isEmpty()) return;
 
+        String trimmed = word.trim();
         FileConfiguration badWordsConfig = configManager.getBadWordsConfig();
-        List<String> safeWords = new ArrayList<>(badWordsConfig.getStringList("safe-words"));
+        List<String> safeWords = badWordsConfig.getStringList("safe-words");
 
-        if (safeWords.contains(word)) {
-            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-safe-word-already-exists", "").replace("{word}", word));
+        if (safeWords.contains(trimmed)) {
+            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-safe-word-already-exists", "").replace("{word}", trimmed));
             return;
         }
 
-        safeWords.add(word);
+        safeWords.add(trimmed);
         badWordsConfig.set("safe-words", safeWords);
 
         try {
             badWordsConfig.save(new File(plugin.getDataFolder(), "bad-words.yml"));
             reloadSafeWords();
-            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-safe-word-success", "").replace("{word}", word));
-            plugin.log("Добавлено безопасное слово &#ffff00" + word);
+            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-safe-word-success", "").replace("{word}", trimmed));
+            plugin.log("Добавлено безопасное слово &#ffff00" + trimmed);
         } catch (Exception e) {
-            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-word-failure", "").replace("{word}", word));
-            plugin.console("Ошибка при добавлении безопасного слова &#ffff00" + word);
+            HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-word-failure", "").replace("{word}", trimmed));
+            plugin.console("Ошибка при добавлении безопасного слова &#ffff00" + trimmed);
         }
     }
 
     public boolean removeBadWord(CommandSender sender, String word) {
         if (word == null || word.trim().isEmpty()) return false;
 
+        String trimmed = word.trim();
         FileConfiguration badWordsConfig = configManager.getBadWordsConfig();
-        List<String> badWordsList = new ArrayList<>(badWordsConfig.getStringList("bad-words"));
+        List<String> badWordsList = badWordsConfig.getStringList("bad-words");
 
-        if (!badWordsList.contains(word)) return false;
+        if (!badWordsList.contains(trimmed)) return false;
 
-        badWordsList.remove(word);
+        badWordsList.remove(trimmed);
         badWordsConfig.set("bad-words", badWordsList);
 
         try {
@@ -129,7 +133,7 @@ public class WordsManager {
             loadWords();
             return true;
         } catch (Exception e) {
-            plugin.console("Ошибка при удалении плохого слова " + word);
+            plugin.console("Ошибка при удалении плохого слова " + trimmed);
             return false;
         }
     }
@@ -137,12 +141,13 @@ public class WordsManager {
     public boolean removeSafeWord(CommandSender sender, String word) {
         if (word == null || word.trim().isEmpty()) return false;
 
+        String trimmed = word.trim();
         FileConfiguration badWordsConfig = configManager.getBadWordsConfig();
         List<String> safeWords = new ArrayList<>(badWordsConfig.getStringList("safe-words"));
 
-        if (!safeWords.contains(word)) return false;
+        if (!safeWords.contains(trimmed)) return false;
 
-        safeWords.remove(word);
+        safeWords.remove(trimmed);
         badWordsConfig.set("safe-words", safeWords);
 
         try {
@@ -150,7 +155,7 @@ public class WordsManager {
             reloadSafeWords();
             return true;
         } catch (Exception e) {
-            plugin.console("Ошибка при удалении безопасного слова " + word);
+            plugin.console("Ошибка при удалении безопасного слова " + trimmed);
             return false;
         }
     }

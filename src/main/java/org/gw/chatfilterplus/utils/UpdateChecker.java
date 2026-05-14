@@ -29,9 +29,10 @@ public class UpdateChecker implements Listener {
 
     private static final long MIN_CHECK_INTERVAL = TimeUnit.MINUTES.toMillis(30);
     private static final String GITHUB_API_URL = "https://api.github.com/repos/MilkyWayTop16/ChatFilterPlus/releases/latest";
-    private static final Pattern TAG_PATTERN = Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"");
 
     private BukkitTask periodicTask;
+
+    private static final Pattern TAG_NAME_PATTERN = Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"");
 
     public UpdateChecker(ChatFilterPlus plugin) {
         this.plugin = plugin;
@@ -131,8 +132,13 @@ public class UpdateChecker implements Listener {
     }
 
     private String extractTagName(String json) {
-        Matcher matcher = TAG_PATTERN.matcher(json);
-        return matcher.find() ? matcher.group(1) : null;
+        if (json == null || json.isEmpty()) return null;
+
+        Matcher matcher = TAG_NAME_PATTERN.matcher(json);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
     }
 
     private String cleanVersion(String version) {

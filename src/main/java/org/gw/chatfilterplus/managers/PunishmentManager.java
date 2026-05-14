@@ -27,10 +27,7 @@ public class PunishmentManager {
     private final File blockedWordsPunishmentLogFile;
     private final File antiSpamPunishmentLogFile;
 
-    private final ThreadLocal<SimpleDateFormat> dateFormat = ThreadLocal.withInitial(() -> {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        return sdf;
-    });
+    private final ThreadLocal<SimpleDateFormat> dateFormat = ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
 
     private final Map<String, AtomicInteger> playerBadWordsViolations = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> playerLinksViolations = new ConcurrentHashMap<>();
@@ -210,7 +207,6 @@ public class PunishmentManager {
 
         String playerName = player.getName();
         String wordsJoined = String.join(", ", items);
-        String linksJoined = wordsJoined;
         String originalMessage = items.isEmpty() ? "[CAPS]" : String.join(" ", items);
         String reason = items.isEmpty() ? "" : items.get(0);
 
@@ -222,14 +218,12 @@ public class PunishmentManager {
 
             if (trimmed.startsWith("[console-command]")) {
                 trimmed = trimmed.substring("[console-command]".length()).trim();
-            } else if (trimmed.startsWith("[console-command] ")) {
-                trimmed = trimmed.substring("[console-command] ".length()).trim();
             }
 
             String cmd = trimmed
                     .replace("{player}", playerName)
                     .replace("{words}", wordsJoined)
-                    .replace("{links}", linksJoined)
+                    .replace("{links}", wordsJoined)
                     .replace("{original-message}", originalMessage)
                     .replace("{reason}", reason);
 
@@ -309,6 +303,7 @@ public class PunishmentManager {
         for (String cooldown : notificationCooldowns) {
             String[] parts = cooldown.split(":", 2);
             if (parts.length != 2) continue;
+
             String notificationType = parts[0].trim();
             long durationMillis = parseDuration(parts[1].trim());
             if (durationMillis > 0) {

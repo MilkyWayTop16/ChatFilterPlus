@@ -12,6 +12,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class LogCleanupManager {
 
@@ -207,7 +208,16 @@ public class LogCleanupManager {
 
     public void shutdown() {
         stopLogCleanupTask();
+
         executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     public synchronized void reload() {

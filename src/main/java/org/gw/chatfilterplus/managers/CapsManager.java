@@ -22,8 +22,8 @@ public class CapsManager {
     private void loadWhitelist() {
         Set<String> set = new HashSet<>();
         for (String word : configManager.getCapsWhitelist()) {
-            if (word != null && !word.trim().isEmpty()) {
-                set.add(word.trim().toLowerCase());
+            if (word != null && !word.isEmpty()) {
+                set.add(word.toLowerCase());
             }
         }
         this.whitelist = Collections.unmodifiableSet(set);
@@ -103,12 +103,13 @@ public class CapsManager {
 
         String lowerWord = word.trim().toLowerCase();
 
-        List<String> currentWhitelist = new ArrayList<>(configManager.getCapsWhitelist());
-        if (currentWhitelist.stream().anyMatch(w -> w.equalsIgnoreCase(lowerWord))) {
+        if (whitelist.contains(lowerWord)) {
             return false;
         }
 
+        List<String> currentWhitelist = new ArrayList<>(configManager.getCapsWhitelist());
         currentWhitelist.add(lowerWord);
+
         configManager.getCapsConfig().set("filter.caps.whitelist", currentWhitelist);
 
         try {
@@ -131,6 +132,7 @@ public class CapsManager {
 
         List<String> currentWhitelist = new ArrayList<>(configManager.getCapsWhitelist());
         boolean removed = currentWhitelist.removeIf(w -> w.equalsIgnoreCase(lowerWord));
+
         if (!removed) return false;
 
         configManager.getCapsConfig().set("filter.caps.whitelist", currentWhitelist);

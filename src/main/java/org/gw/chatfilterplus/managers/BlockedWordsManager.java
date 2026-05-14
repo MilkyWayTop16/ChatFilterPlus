@@ -32,11 +32,9 @@ public class BlockedWordsManager {
         List<String> words = configManager.getBlockedWordsList();
 
         for (String word : words) {
-            if (word == null || word.trim().isEmpty()) continue;
-
             try {
-                Pattern pattern = PatternFactory.createPattern(word.trim(), filterLevel);
-                blockedWordsMap.put(pattern, word.trim());
+                Pattern pattern = PatternFactory.createPattern(word, filterLevel);
+                blockedWordsMap.put(pattern, word);
             } catch (Exception e) {
                 plugin.console("&#FF5D00Ошибка при создании паттерна для запрещённого слова: " + word);
             }

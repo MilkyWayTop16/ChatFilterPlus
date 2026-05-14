@@ -282,6 +282,6 @@ actions:
     - "[message] &r "
     - "[message] &#FFFF00   ◆ /cfp notify (on/off) (Никнейм) &f— Переключить уведомления"
     - "[message] &#FFFF00   ◆ /cfp reload (configs/cache/all) &f— Перезагрузка определённой части плагина"
-    - "[message] &#FFFF00   ◆ /cfp help &f— Показать все команды плагина (это сообщение)"
+    - "[message] &#FFFF00   ◆ /cfp help &f—   (это сообщение)"
     - "[message] &r "
     - "[sound] BLOCK_LEVER_CLICK"

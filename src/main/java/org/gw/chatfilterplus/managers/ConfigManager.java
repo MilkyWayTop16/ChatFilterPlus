@@ -14,6 +14,7 @@ import java.io.File;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Getter
 public class ConfigManager {
@@ -204,8 +205,8 @@ public class ConfigManager {
         badWordsFilterMode = badWordsConfig.getString("filter.bad-words.mode", "send-and-notify").toLowerCase();
         badWordsFilterLevel = badWordsConfig.getString("filter.bad-words.level", "high").toLowerCase();
         badWordsFilterReplacement = badWordsConfig.getString("filter.bad-words.replacement", "*");
-        badWordsExceptionPlayers = badWordsConfig.getStringList("filter.bad-words.exceptions.players");
-        badWordsExceptionGroups = badWordsConfig.getStringList("filter.bad-words.exceptions.groups");
+        badWordsExceptionPlayers = cleanStringList(badWordsConfig.getStringList("filter.bad-words.exceptions.players"));
+        badWordsExceptionGroups = cleanStringList(badWordsConfig.getStringList("filter.bad-words.exceptions.groups"));
 
         linksFilterEnabled = linksConfig.getBoolean("filter.links.enabled", true);
         linksFilterMode = linksConfig.getString("filter.links.mode", "block-and-notify").toLowerCase();
@@ -213,9 +214,9 @@ public class ConfigManager {
         linksRegex = linksConfig.getString("filter.links.regex", "(?i)(?:h\\s*t\\s*t\\s*p\\s*s?://\\S+|\\S*\\b(?:https?://)?[\\w\\p{L}]+(?:[\\.\\,\\s\\u200B\\u200C\\u200D\\u2060\\uFEFF]+[\\w\\p{L}]+)+[\\.\\,\\s]*(?:ru|com|net|org|io|me|info|biz|co|edu|gov|pro|fun|club|xyz|online|shop|site|tech|store|live|app|blog|world|space|work|game|dev|tv|cc|us|uk|ca|au|de|fr|jp|cn|link|digital|agency|news|media|cloud|page|wiki|art|team|systems|solutions|community|academy|center|group|tools|today|best|win|vip|bet|stream|chat|email|life|company|co\\.uk|co\\.jp|org\\.uk|gov\\.uk|ac\\.uk|edu\\.au|gov\\.au|bit\\.ly|t\\.co|tinyurl\\.com|goo\\.gl)[/\\S]*)");
         linksListFilterEnabled = linksConfig.getBoolean("filter.links.list-filter.enabled", false);
         linksListFilterMode = linksConfig.getString("filter.links.list-filter.mode", "whitelist").toLowerCase();
-        linksListFilterDomains = linksConfig.getStringList("filter.links.list-filter.domains");
-        linksExceptionPlayers = linksConfig.getStringList("filter.links.exceptions.players");
-        linksExceptionGroups = linksConfig.getStringList("filter.links.exceptions.groups");
+        linksListFilterDomains = cleanStringList(linksConfig.getStringList("filter.links.list-filter.domains"));
+        linksExceptionPlayers = cleanStringList(linksConfig.getStringList("filter.links.exceptions.players"));
+        linksExceptionGroups = cleanStringList(linksConfig.getStringList("filter.links.exceptions.groups"));
 
         capsFilterEnabled = capsConfig.getBoolean("filter.caps.enabled", false);
         capsFilterMode = capsConfig.getString("filter.caps.mode", "replace-and-notify").toLowerCase();
@@ -226,18 +227,46 @@ public class ConfigManager {
         capsFilterPriorityBadwords = capsConfig.getString("filter.caps.badwords-priority.filter-priority", "both").toLowerCase();
         capsNotificationPriorityBlockedwords = capsConfig.getString("filter.caps.blockedwords-priority.notification-priority", "blockedwords").toLowerCase();
         capsFilterPriorityBlockedwords = capsConfig.getString("filter.caps.blockedwords-priority.filter-priority", "both").toLowerCase();
-        capsExceptionPlayers = capsConfig.getStringList("filter.caps.exceptions.players");
-        capsExceptionGroups = capsConfig.getStringList("filter.caps.exceptions.groups");
+        capsExceptionPlayers = cleanStringList(capsConfig.getStringList("filter.caps.exceptions.players"));
+        capsExceptionGroups = cleanStringList(capsConfig.getStringList("filter.caps.exceptions.groups"));
 
         blockedWordsFilterEnabled = blockedWordsConfig.getBoolean("filter.blocked-words.enabled", true);
         blockedWordsFilterMode = blockedWordsConfig.getString("filter.blocked-words.mode", "block-and-notify").toLowerCase();
         blockedWordsFilterReplacement = blockedWordsConfig.getString("filter.blocked-words.replacement", "*");
         blockedWordsFilterLevel = blockedWordsConfig.getString("filter.blocked-words.level", "high").toLowerCase();
-        blockedWordsExceptionPlayers = blockedWordsConfig.getStringList("filter.blocked-words.exceptions.players");
-        blockedWordsExceptionGroups = blockedWordsConfig.getStringList("filter.blocked-words.exceptions.groups");
+        blockedWordsExceptionPlayers = cleanStringList(blockedWordsConfig.getStringList("filter.blocked-words.exceptions.players"));
+        blockedWordsExceptionGroups = cleanStringList(blockedWordsConfig.getStringList("filter.blocked-words.exceptions.groups"));
 
-        antiSpamExceptionPlayers = antiSpamConfig.getStringList("filter.anti-spam.exceptions.players");
-        antiSpamExceptionGroups = antiSpamConfig.getStringList("filter.anti-spam.exceptions.groups");
+        antiSpamExceptionPlayers = cleanStringList(antiSpamConfig.getStringList("filter.anti-spam.exceptions.players"));
+        antiSpamExceptionGroups = cleanStringList(antiSpamConfig.getStringList("filter.anti-spam.exceptions.groups"));
+    }
+
+    private List<String> cleanStringList(List<String> list) {
+        if (list == null || list.isEmpty()) return List.of();
+        List<String> result = new ArrayList<>(list.size());
+        for (String s : list) {
+            if (s != null) {
+                String trimmed = s.trim();
+                if (!trimmed.isEmpty() && !result.contains(trimmed)) {
+                    result.add(trimmed);
+                }
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    private List<String> cleanWordList(List<String> list) {
+        if (list == null || list.isEmpty()) return List.of();
+        List<String> result = new ArrayList<>(list.size());
+        for (String s : list) {
+            if (s != null) {
+                String trimmed = s.trim().toLowerCase();
+                if (trimmed.length() >= 2 && !result.contains(trimmed)) {
+                    result.add(trimmed);
+                }
+            }
+        }
+        return Collections.unmodifiableList(result);
     }
 
     private void loadMainConfig() {
@@ -384,7 +413,7 @@ public class ConfigManager {
     private void executeParsedAction(Player player, String type, String content) {
         try {
             switch (type) {
-                case "message" -> { if (player != null) HexColors.sendMessage(player, content); else plugin.console(content); }
+                case "message" -> { if (player != null) HexColors.sendMessage(player, content); }
                 case "message-console" -> plugin.console(content);
                 case "broadcast" -> Bukkit.broadcastMessage(HexColors.translate(content));
                 case "sound" -> executeSound(player, content);
@@ -497,8 +526,16 @@ public class ConfigManager {
         try { return Integer.parseInt(value); } catch (NumberFormatException e) { return defaultValue; }
     }
 
-    public List<String> getSafeWords() { return badWordsConfig.getStringList("safe-words"); }
-    public List<String> getBadWordsList() { return badWordsConfig.getStringList("bad-words"); }
-    public List<String> getBlockedWordsList() { return blockedWordsConfig.getStringList("blocked-words"); }
-    public List<String> getCapsWhitelist() { return capsConfig.getStringList("filter.caps.whitelist"); }
+    public List<String> getSafeWords() {
+        return cleanWordList(badWordsConfig.getStringList("safe-words"));
+    }
+    public List<String> getBadWordsList() {
+        return cleanWordList(badWordsConfig.getStringList("bad-words"));
+    }
+    public List<String> getBlockedWordsList() {
+        return cleanWordList(blockedWordsConfig.getStringList("blocked-words"));
+    }
+    public List<String> getCapsWhitelist() {
+        return cleanStringList(capsConfig.getStringList("filter.caps.whitelist"));
+    }
 }

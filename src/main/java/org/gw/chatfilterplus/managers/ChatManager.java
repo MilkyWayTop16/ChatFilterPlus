@@ -109,6 +109,8 @@ public class ChatManager implements Listener {
                             java.util.function.Consumer<String> setMessage,
                             java.util.function.Consumer<Boolean> cancelEvent) {
 
+        if (player == null) return;
+
         boolean bypassBadWords = isPlayerBypassingFilter("badwords", player);
         boolean bypassLinks = isPlayerBypassingFilter("links", player);
         boolean bypassCaps = isPlayerBypassingFilter("caps", player);
@@ -234,26 +236,23 @@ public class ChatManager implements Listener {
 
         if (player == null || !player.isOnline()) return;
 
-        if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
-            Bukkit.getScheduler().runTask(plugin, () ->
-                    sendFilterNotification(FilterType.BLOCKED_WORDS, player, cached.getBlockedWords(), originalMessage));
-        }
-        if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
-            Bukkit.getScheduler().runTask(plugin, () ->
-                    sendFilterNotification(FilterType.BAD_WORDS, player, cached.getBadWords(), originalMessage));
-        }
-        if (cached.isCaps() && configManager.isCapsFilterEnabled() && !bypassCaps) {
-            Bukkit.getScheduler().runTask(plugin, () ->
-                    sendFilterNotification(FilterType.CAPS, player, List.of(originalMessage), originalMessage));
-            if (shouldSendCapsPlayerNotification(cached, bypassBadWords, bypassBlockedWords)) {
-                Bukkit.getScheduler().runTaskLater(plugin, () ->
-                        safeNotifyPlayer(player, FilterType.CAPS, "[CAPS]"), 3L);
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
+                sendFilterNotification(FilterType.BLOCKED_WORDS, player, cached.getBlockedWords(), originalMessage);
             }
-        }
-        if (!cached.getLinks().isEmpty() && configManager.isLinksFilterEnabled() && !bypassLinks) {
-            Bukkit.getScheduler().runTask(plugin, () ->
-                    sendFilterNotification(FilterType.LINKS, player, cached.getLinks(), originalMessage));
-        }
+            if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
+                sendFilterNotification(FilterType.BAD_WORDS, player, cached.getBadWords(), originalMessage);
+            }
+            if (cached.isCaps() && configManager.isCapsFilterEnabled() && !bypassCaps) {
+                sendFilterNotification(FilterType.CAPS, player, List.of(originalMessage), originalMessage);
+                if (shouldSendCapsPlayerNotification(cached, bypassBadWords, bypassBlockedWords)) {
+                    notificationManager.notifyPlayer(player, FilterType.CAPS, "[CAPS]");
+                }
+            }
+            if (!cached.getLinks().isEmpty() && configManager.isLinksFilterEnabled() && !bypassLinks) {
+                sendFilterNotification(FilterType.LINKS, player, cached.getLinks(), originalMessage);
+            }
+        });
     }
 
     private void sendFilterNotification(FilterType type, Player player, List<String> items, String originalMessage) {
@@ -270,21 +269,15 @@ public class ChatManager implements Listener {
         punishmentManager.handlePunishment(player, type, uniqueItems);
 
         if (type != FilterType.CAPS) {
-            safeNotifyPlayer(player, type, uniqueItems.isEmpty() ? "" : uniqueItems.get(0));
+            notificationManager.notifyPlayer(player, type, uniqueItems.isEmpty() ? "" : uniqueItems.get(0));
         }
-    }
-
-    private void safeNotifyPlayer(Player player, FilterType type, String item) {
-        if (player == null || !player.isOnline()) return;
-        Bukkit.getScheduler().runTask(plugin, () -> notificationManager.notifyPlayer(player, type, item));
     }
 
     private void safeExecutePlayerAction(Player player, FilterType type, String subPath, Map<String, String> placeholders) {
         if (player == null || !player.isOnline()) return;
         Bukkit.getScheduler().runTask(plugin, () -> {
-            switch (type) {
-                case ANTI_SPAM -> configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
-                default -> {}
+            if (type == FilterType.ANTI_SPAM) {
+                configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
             }
         });
     }
