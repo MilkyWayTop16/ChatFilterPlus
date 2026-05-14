@@ -2,7 +2,6 @@ package org.gw.chatfilterplus.managers;
 
 import lombok.Getter;
 import org.bukkit.Bukkit;
-import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -12,8 +11,10 @@ import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.AntiSpamResult;
 
 import java.io.File;
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.function.Consumer;
 
 @Getter
 public class ChatManager implements Listener {
@@ -32,7 +33,10 @@ public class ChatManager implements Listener {
 
     private final File badWordsLogFile;
     private final File linksLogFile;
-    private final SimpleDateFormat dateFormat;
+
+    private final ThreadLocal<DateTimeFormatter> dateFormatter = ThreadLocal.withInitial(
+            () -> DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    );
 
     public ChatManager(ChatFilterPlus plugin, ConfigManager configManager, WordsManager wordsManager,
                        LinksManager linksManager, CapsManager capsManager,
@@ -55,7 +59,7 @@ public class ChatManager implements Listener {
 
         this.badWordsLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "badwords-logs.txt");
         this.linksLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "links-logs.txt");
-        this.dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
         initializeLogFiles();
     }
 
@@ -79,35 +83,19 @@ public class ChatManager implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     public void onPlayerChat(AsyncPlayerChatEvent event) {
-        handleChat(event.getPlayer(), event.getMessage(), event::setMessage, event::setCancelled);
+        handleMessage(event.getPlayer(), event.getMessage(),
+                event::setMessage,
+                event::setCancelled);
     }
 
     public void handleCommandMessage(Player player, String originalMessage,
-                                     java.util.function.Consumer<String> setFinalMessage) {
-
-        boolean bypassBadWords = isPlayerBypassingFilter("badwords", player);
-        boolean bypassLinks = isPlayerBypassingFilter("links", player);
-        boolean bypassCaps = isPlayerBypassingFilter("caps", player);
-        boolean bypassBlockedWords = isPlayerBypassingFilter("blockedwords", player);
-
-        if (bypassBadWords && bypassLinks && bypassCaps && bypassBlockedWords) {
-            setFinalMessage.accept(originalMessage);
-            return;
-        }
-
-        MessageCacheManager.CachedMessage cached = processMessage(player, originalMessage,
-                bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords);
-
-        String finalMessage = determineFinalMessage(cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords);
-
-        if (!finalMessage.equals(originalMessage)) {
-            setFinalMessage.accept(finalMessage);
-        }
+                                     Consumer<String> setFinalMessage) {
+        handleMessage(player, originalMessage, setFinalMessage, null);
     }
 
-    private void handleChat(Player player, String originalMessage,
-                            java.util.function.Consumer<String> setMessage,
-                            java.util.function.Consumer<Boolean> cancelEvent) {
+    private void handleMessage(Player player, String originalMessage,
+                               Consumer<String> setFinalMessage,
+                               Consumer<Boolean> cancelEvent) {
 
         if (player == null) return;
 
@@ -118,45 +106,41 @@ public class ChatManager implements Listener {
         boolean bypassAntiSpam = isPlayerBypassingFilter("antispam", player);
 
         if (bypassBadWords && bypassLinks && bypassCaps && bypassBlockedWords && bypassAntiSpam) {
+            if (setFinalMessage != null) setFinalMessage.accept(originalMessage);
             return;
         }
 
         if (!bypassAntiSpam) {
             AntiSpamResult spamResult = antiSpamManager.checkSpam(player, originalMessage);
             if (spamResult != null) {
-                final AntiSpamResult finalSpamResult = spamResult;
                 Bukkit.getScheduler().runTask(plugin, () ->
-                        sendAntiSpamNotification(player, finalSpamResult, originalMessage));
+                        sendAntiSpamNotification(player, spamResult, originalMessage));
 
                 if (!"character-flood-first".equals(spamResult.reason)) {
-                    cancelEvent.accept(true);
+                    if (cancelEvent != null) cancelEvent.accept(true);
                     return;
                 }
             }
         }
 
-        MessageCacheManager.CachedMessage cached = processMessage(player, originalMessage,
-                bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords);
+        MessageCacheManager.CachedMessage cached = cacheManager.analyzeAndCacheMessage(
+                originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords);
 
         String finalMessage = determineFinalMessage(cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords);
 
-        if (shouldBlockMessage(cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords)) {
-            cancelEvent.accept(true);
-        } else if (!finalMessage.equals(originalMessage)) {
-            setMessage.accept(finalMessage);
+        boolean shouldBlock = shouldBlockMessage(cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords);
+
+        if (shouldBlock) {
+            if (cancelEvent != null) cancelEvent.accept(true);
+        } else if (setFinalMessage != null && !finalMessage.equals(originalMessage)) {
+            setFinalMessage.accept(finalMessage);
         }
-    }
 
-    private MessageCacheManager.CachedMessage processMessage(Player player, String originalMessage,
-                                                             boolean bypassBadWords, boolean bypassLinks,
-                                                             boolean bypassCaps, boolean bypassBlockedWords) {
-
-        MessageCacheManager.CachedMessage cached = cacheManager.analyzeAndCacheMessage(
-                originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
-
-        sendAllNotifications(player, cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords, originalMessage);
-
-        return cached;
+        if (!cached.getBlockedWords().isEmpty() || !cached.getBadWords().isEmpty() ||
+                cached.isCaps() || !cached.getLinks().isEmpty()) {
+            Bukkit.getScheduler().runTask(plugin, () ->
+                    sendAllNotifications(player, cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords, originalMessage));
+        }
     }
 
     private String determineFinalMessage(MessageCacheManager.CachedMessage cached,
@@ -175,7 +159,6 @@ public class ChatManager implements Listener {
 
     private boolean shouldApplyCapsFix(MessageCacheManager.CachedMessage cached,
                                        boolean bypassBadWords, boolean bypassBlockedWords) {
-
         if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
             return !"blockedwords".equalsIgnoreCase(configManager.getCapsFilterPriorityBlockedwords());
         }
@@ -204,6 +187,49 @@ public class ChatManager implements Listener {
         return false;
     }
 
+    private void sendAllNotifications(Player player, MessageCacheManager.CachedMessage cached,
+                                      boolean bypassBadWords, boolean bypassLinks,
+                                      boolean bypassCaps, boolean bypassBlockedWords, String originalMessage) {
+
+        if (player == null || !player.isOnline()) return;
+
+        if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
+            sendFilterNotification(FilterType.BLOCKED_WORDS, player, cached.getBlockedWords(), originalMessage);
+        }
+        if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
+            sendFilterNotification(FilterType.BAD_WORDS, player, cached.getBadWords(), originalMessage);
+        }
+        if (cached.isCaps() && configManager.isCapsFilterEnabled() && !bypassCaps) {
+            sendFilterNotification(FilterType.CAPS, player, List.of(originalMessage), originalMessage);
+            if (shouldSendCapsPlayerNotification(cached, bypassBadWords, bypassBlockedWords)) {
+                notificationManager.notifyPlayer(player, FilterType.CAPS, "[CAPS]");
+            }
+        }
+        if (!cached.getLinks().isEmpty() && configManager.isLinksFilterEnabled() && !bypassLinks) {
+            sendFilterNotification(FilterType.LINKS, player, cached.getLinks(), originalMessage);
+        }
+    }
+
+    private void sendFilterNotification(FilterType type, Player player, List<String> items, String originalMessage) {
+        if (player == null || !player.isOnline()) return;
+
+        List<String> uniqueItems = items.size() > 1
+                ? new ArrayList<>(new LinkedHashSet<>(items))
+                : items;
+
+        plugin.log(getLogMessage(type, player.getName(), uniqueItems, originalMessage));
+        logToFile(player.getName(), uniqueItems, type);
+
+        notificationManager.notifyAdmins(player, type, uniqueItems);
+        notificationManager.notifyConsole(player, type, uniqueItems);
+        notificationManager.notifyDiscord(player, type, uniqueItems);
+        punishmentManager.handlePunishment(player, type, uniqueItems);
+
+        if (type != FilterType.CAPS) {
+            notificationManager.notifyPlayer(player, type, uniqueItems.isEmpty() ? "" : uniqueItems.get(0));
+        }
+    }
+
     private void sendAntiSpamNotification(Player player, AntiSpamResult result, String originalMessage) {
         if (player == null || !player.isOnline()) return;
 
@@ -225,61 +251,8 @@ public class ChatManager implements Listener {
             default -> "general-cooldown";
         };
 
-        safeExecutePlayerAction(player, FilterType.ANTI_SPAM, subPath, placeholders);
-
+        configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
         punishmentManager.handlePunishment(player, FilterType.ANTI_SPAM, items);
-    }
-
-    private void sendAllNotifications(Player player, MessageCacheManager.CachedMessage cached,
-                                      boolean bypassBadWords, boolean bypassLinks,
-                                      boolean bypassCaps, boolean bypassBlockedWords, String originalMessage) {
-
-        if (player == null || !player.isOnline()) return;
-
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
-                sendFilterNotification(FilterType.BLOCKED_WORDS, player, cached.getBlockedWords(), originalMessage);
-            }
-            if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
-                sendFilterNotification(FilterType.BAD_WORDS, player, cached.getBadWords(), originalMessage);
-            }
-            if (cached.isCaps() && configManager.isCapsFilterEnabled() && !bypassCaps) {
-                sendFilterNotification(FilterType.CAPS, player, List.of(originalMessage), originalMessage);
-                if (shouldSendCapsPlayerNotification(cached, bypassBadWords, bypassBlockedWords)) {
-                    notificationManager.notifyPlayer(player, FilterType.CAPS, "[CAPS]");
-                }
-            }
-            if (!cached.getLinks().isEmpty() && configManager.isLinksFilterEnabled() && !bypassLinks) {
-                sendFilterNotification(FilterType.LINKS, player, cached.getLinks(), originalMessage);
-            }
-        });
-    }
-
-    private void sendFilterNotification(FilterType type, Player player, List<String> items, String originalMessage) {
-        if (player == null || !player.isOnline()) return;
-
-        List<String> uniqueItems = new ArrayList<>(new LinkedHashSet<>(items));
-
-        plugin.log(getLogMessage(type, player.getName(), uniqueItems, originalMessage));
-        logToFile(player.getName(), uniqueItems, type);
-
-        notificationManager.notifyAdmins(player, type, uniqueItems);
-        notificationManager.notifyConsole(player, type, uniqueItems);
-        notificationManager.notifyDiscord(player, type, uniqueItems);
-        punishmentManager.handlePunishment(player, type, uniqueItems);
-
-        if (type != FilterType.CAPS) {
-            notificationManager.notifyPlayer(player, type, uniqueItems.isEmpty() ? "" : uniqueItems.get(0));
-        }
-    }
-
-    private void safeExecutePlayerAction(Player player, FilterType type, String subPath, Map<String, String> placeholders) {
-        if (player == null || !player.isOnline()) return;
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            if (type == FilterType.ANTI_SPAM) {
-                configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
-            }
-        });
     }
 
     private String getLogMessage(FilterType type, String playerName, List<String> items, String originalMessage) {
@@ -326,11 +299,15 @@ public class ChatManager implements Listener {
             case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("logs.file.anti-spam.message", "[{time}] Игрок {player} спамил сообщениями: {reason}");
         };
 
-        String linksFormatted = type == FilterType.LINKS ? linksManager.getFormattedLinks(items) : String.join(", ", items);
+        String linksFormatted = type == FilterType.LINKS
+                ? linksManager.getFormattedLinks(items)
+                : String.join(", ", items);
+
+        String time = dateFormatter.get().format(LocalDateTime.now());
 
         return template
                 .replace("{player}", playerName)
-                .replace("{time}", dateFormat.format(new Date()))
+                .replace("{time}", time)
                 .replace("{words}", String.join(", ", items))
                 .replace("{links}", linksFormatted)
                 .replace("{original-message}", items.isEmpty() ? "" : String.join(", ", items))
@@ -339,14 +316,7 @@ public class ChatManager implements Listener {
 
     private boolean isPlayerBypassingFilter(String filterName, Player player) {
         String perm = "chatfilterplus.bypass.chatfilter." + filterName;
-
-        if (player.hasPermission(perm)) {
-            return true;
-        }
-
-        if (player.isOp()) {
-            return false;
-        }
+        if (player.hasPermission(perm)) return true;
 
         List<String> exceptionPlayers;
         List<String> exceptionGroups;
@@ -372,19 +342,13 @@ public class ChatManager implements Listener {
                 exceptionPlayers = configManager.getAntiSpamExceptionPlayers();
                 exceptionGroups = configManager.getAntiSpamExceptionGroups();
             }
-            default -> {
-                return false;
-            }
+            default -> { return false; }
         }
 
-        if (exceptionPlayers.contains(player.getName())) {
-            return true;
-        }
+        if (exceptionPlayers.contains(player.getName())) return true;
 
         for (String group : exceptionGroups) {
-            if (player.hasPermission("group." + group)) {
-                return true;
-            }
+            if (player.hasPermission("group." + group)) return true;
         }
         return false;
     }

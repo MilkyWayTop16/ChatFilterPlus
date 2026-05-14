@@ -15,6 +15,7 @@ public class AntiSpamManager {
     private static final int HISTORY_SIZE = 8;
     private static final long CLEANUP_INTERVAL_TICKS = 6000L;
     private static final long ENTRY_LIFETIME_MILLIS = 600_000L;
+    private static final int MAX_LEVENSHTEIN_LENGTH_DIFF = 6;
 
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
@@ -33,7 +34,7 @@ public class AntiSpamManager {
         UUID uuid = player.getUniqueId();
         long now = System.currentTimeMillis();
 
-        Deque<RecentMessage> history = playerHistory.computeIfAbsent(uuid, k -> new ArrayDeque<>());
+        Deque<RecentMessage> history = playerHistory.computeIfAbsent(uuid, k -> new ConcurrentLinkedDeque<>());
 
         AntiSpamResult floodResult = checkCharacterFlood(player, message, now);
         if (floodResult != null) return floodResult;
@@ -57,7 +58,9 @@ public class AntiSpamManager {
         int ignoreLength = configManager.getGeneralCooldownIgnoreIfLongerThan();
         if (ignoreLength > 0 && message.length() > ignoreLength) return null;
 
-        RecentMessage last = history.getLast();
+        RecentMessage last = history.peekLast();
+        if (last == null) return null;
+
         long remaining = configManager.getGeneralCooldownSeconds() * 1000L - (now - last.timestamp);
         if (remaining > 0) {
             return new AntiSpamResult("general-cooldown", (int) Math.ceil(remaining / 1000.0));
@@ -89,6 +92,10 @@ public class AntiSpamManager {
 
     private boolean isSimilar(String msg1, String msg2) {
         if (msg1.equals(msg2)) return true;
+
+        if (Math.abs(msg1.length() - msg2.length()) > MAX_LEVENSHTEIN_LENGTH_DIFF) {
+            return false;
+        }
 
         double jaccard = calculateJaccardSimilarity(msg1, msg2);
         int levenshtein = calculateLevenshteinDistance(msg1, msg2);

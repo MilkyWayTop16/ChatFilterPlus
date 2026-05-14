@@ -4,14 +4,18 @@ import lombok.Getter;
 import org.gw.chatfilterplus.ChatFilterPlus;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 @Getter
 public class CapsManager {
 
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
-    private Set<String> whitelist;
+
+    private final AtomicReference<Set<String>> whitelist = new AtomicReference<>(Set.of());
+
+    private static final Pattern NON_LETTERS = Pattern.compile("[^\\p{L}]");
 
     public CapsManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
@@ -26,7 +30,7 @@ public class CapsManager {
                 set.add(word.toLowerCase());
             }
         }
-        this.whitelist = Collections.unmodifiableSet(set);
+        whitelist.set(Collections.unmodifiableSet(set));
     }
 
     public boolean isCaps(String message) {
@@ -34,9 +38,10 @@ public class CapsManager {
 
         int minLength = getEffectiveMinLength();
         boolean ignoreNonLetters = configManager.isCapsIgnoreNonLetters();
+        Set<String> currentWhitelist = whitelist.get();
 
         for (String word : message.split("\\s+")) {
-            if (isWhitelistedOrTooShort(word, ignoreNonLetters, minLength)) continue;
+            if (isWhitelistedOrTooShort(word, currentWhitelist, ignoreNonLetters, minLength)) continue;
             if (isCapsWord(word, ignoreNonLetters)) return true;
         }
         return false;
@@ -47,6 +52,7 @@ public class CapsManager {
 
         int minLength = getEffectiveMinLength();
         boolean ignoreNonLetters = configManager.isCapsIgnoreNonLetters();
+        Set<String> currentWhitelist = whitelist.get();
 
         StringBuilder result = new StringBuilder(message.length());
         String[] parts = message.split("(?<=\\s)|(?=\\s)");
@@ -57,7 +63,8 @@ public class CapsManager {
                 continue;
             }
 
-            if (isWhitelistedOrTooShort(part, ignoreNonLetters, minLength) || !isCapsWord(part, ignoreNonLetters)) {
+            if (isWhitelistedOrTooShort(part, currentWhitelist, ignoreNonLetters, minLength) ||
+                    !isCapsWord(part, ignoreNonLetters)) {
                 result.append(part);
             } else {
                 result.append(part.toLowerCase());
@@ -71,18 +78,17 @@ public class CapsManager {
         return minLength == -1 ? 1 : minLength;
     }
 
-    private boolean isWhitelistedOrTooShort(String word, boolean ignoreNonLetters, int minLength) {
-        String clean = ignoreNonLetters ? word.replaceAll("[^\\p{L}]", "") : word;
+    private boolean isWhitelistedOrTooShort(String word, Set<String> currentWhitelist,
+                                            boolean ignoreNonLetters, int minLength) {
+        String clean = cleanWord(word, ignoreNonLetters);
         if (clean.isEmpty()) return true;
 
-        String lowerClean = clean.toLowerCase();
-        if (whitelist.contains(lowerClean)) return true;
-
+        if (currentWhitelist.contains(clean.toLowerCase())) return true;
         return clean.length() < minLength;
     }
 
     private boolean isCapsWord(String word, boolean ignoreNonLetters) {
-        String clean = ignoreNonLetters ? word.replaceAll("[^\\p{L}]", "") : word;
+        String clean = cleanWord(word, ignoreNonLetters);
         if (clean.length() < 2) return false;
 
         int upperCount = 0;
@@ -96,25 +102,27 @@ public class CapsManager {
         return percent >= configManager.getCapsMaxPercent();
     }
 
+    private String cleanWord(String word, boolean ignoreNonLetters) {
+        if (!ignoreNonLetters) return word;
+        return NON_LETTERS.matcher(word).replaceAll("");
+    }
+
     public boolean addWhitelistWord(String word) {
-        if (word == null || word.trim().isEmpty()) {
-            return false;
-        }
+        if (word == null || word.trim().isEmpty()) return false;
 
         String lowerWord = word.trim().toLowerCase();
+        Set<String> current = whitelist.get();
 
-        if (whitelist.contains(lowerWord)) {
-            return false;
-        }
+        if (current.contains(lowerWord)) return false;
 
-        List<String> currentWhitelist = new ArrayList<>(configManager.getCapsWhitelist());
-        currentWhitelist.add(lowerWord);
+        List<String> list = new ArrayList<>(configManager.getCapsWhitelist());
+        list.add(lowerWord);
 
-        configManager.getCapsConfig().set("filter.caps.whitelist", currentWhitelist);
+        configManager.getCapsConfig().set("filter.caps.whitelist", list);
 
         try {
             configManager.getCapsConfig().save(new java.io.File(plugin.getDataFolder(), "caps.yml"));
-            reload();
+            loadWhitelist(); // обновляем atomic reference
             plugin.log("Добавлено слово в whitelist капса: &#ffff00" + lowerWord);
             return true;
         } catch (Exception e) {
@@ -124,22 +132,21 @@ public class CapsManager {
     }
 
     public boolean removeWhitelistWord(String word) {
-        if (word == null || word.trim().isEmpty()) {
-            return false;
-        }
+        if (word == null || word.trim().isEmpty()) return false;
 
         String lowerWord = word.trim().toLowerCase();
+        Set<String> current = whitelist.get();
 
-        List<String> currentWhitelist = new ArrayList<>(configManager.getCapsWhitelist());
-        boolean removed = currentWhitelist.removeIf(w -> w.equalsIgnoreCase(lowerWord));
+        if (!current.contains(lowerWord)) return false;
 
-        if (!removed) return false;
+        List<String> list = new ArrayList<>(configManager.getCapsWhitelist());
+        list.removeIf(w -> w.equalsIgnoreCase(lowerWord));
 
-        configManager.getCapsConfig().set("filter.caps.whitelist", currentWhitelist);
+        configManager.getCapsConfig().set("filter.caps.whitelist", list);
 
         try {
             configManager.getCapsConfig().save(new java.io.File(plugin.getDataFolder(), "caps.yml"));
-            reload();
+            loadWhitelist();
             plugin.log("Удалено слово из whitelist капса: &#ffff00" + lowerWord);
             return true;
         } catch (Exception e) {

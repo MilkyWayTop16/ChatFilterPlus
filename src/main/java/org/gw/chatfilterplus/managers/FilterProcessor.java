@@ -32,8 +32,12 @@ public class FilterProcessor {
         this.wordNormalizer = wordNormalizer;
     }
 
-    public MessageCacheManager.CachedMessage processMessage(String originalMessage, boolean bypassBadWords,
-                                                            boolean bypassLinks, boolean bypassBlockedWords) {
+    public MessageCacheManager.CachedMessage processMessage(String originalMessage,
+                                                            boolean bypassBadWords,
+                                                            boolean bypassLinks,
+                                                            boolean bypassBlockedWords,
+                                                            boolean bypassCaps) {
+
         String filteredMessage = originalMessage;
 
         List<String> badWords = null;
@@ -48,8 +52,7 @@ public class FilterProcessor {
 
         if (configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
             badWords = new ArrayList<>();
-            String normalized = WordNormalizer.normalize(originalMessage, configManager.getBadWordsFilterLevel());
-            filteredMessage = filterBadWords(originalMessage, normalized, badWords);
+            filteredMessage = filterBadWords(filteredMessage, badWords);
         }
 
         if (configManager.isLinksFilterEnabled() && !bypassLinks) {
@@ -59,7 +62,7 @@ public class FilterProcessor {
 
         boolean isCaps = false;
         String capsFixedMessage = null;
-        if (configManager.isCapsFilterEnabled()) {
+        if (configManager.isCapsFilterEnabled() && !bypassCaps) {
             isCaps = capsManager.isCaps(originalMessage);
             if (isCaps) {
                 capsFixedMessage = capsManager.fixCaps(originalMessage);
@@ -81,25 +84,31 @@ public class FilterProcessor {
                                    List<String> foundWords, String replacement) {
         if (patternMap.isEmpty() || message.length() < 2) return message;
 
-        StringBuilder result = new StringBuilder(message);
-        boolean found = false;
+        List<Replacement> replacements = new ArrayList<>();
 
         for (Map.Entry<Pattern, String> entry : patternMap.entrySet()) {
             Matcher matcher = entry.getKey().matcher(message);
             while (matcher.find()) {
                 String matched = matcher.group();
                 foundWords.add(matched);
-                found = true;
 
                 String repl = replacement.equals("*") ? "*".repeat(matched.length()) : replacement;
-                result.replace(matcher.start(), matcher.end(), repl);
+                replacements.add(new Replacement(matcher.start(), matched.length(), repl));
             }
         }
-        return found ? result.toString() : message;
+
+        if (replacements.isEmpty()) return message;
+
+        replacements.sort(Comparator.comparingInt(r -> -r.start));
+        StringBuilder result = new StringBuilder(message);
+        for (Replacement rep : replacements) {
+            result.replace(rep.start, rep.start + rep.length, rep.replacement);
+        }
+        return result.toString();
     }
 
-    private String filterBadWords(String originalMessage, String normalizedMessage, List<String> badWords) {
-        if (originalMessage.length() < 3) return originalMessage;
+    private String filterBadWords(String message, List<String> badWords) {
+        if (message.length() < 3) return message;
 
         String replacement = configManager.getBadWordsFilterReplacement();
         String level = configManager.getBadWordsFilterLevel();
@@ -108,7 +117,7 @@ public class FilterProcessor {
             List<Replacement> replacements = new ArrayList<>();
 
             for (Map.Entry<Pattern, String> entry : wordsManager.getWordsMap().entrySet()) {
-                Matcher matcher = entry.getKey().matcher(originalMessage);
+                Matcher matcher = entry.getKey().matcher(message);
                 while (matcher.find()) {
                     String foundWord = matcher.group(1);
                     if (wordNormalizer.isSafeWord(foundWord)) continue;
@@ -124,25 +133,26 @@ public class FilterProcessor {
                 }
             }
 
-            if (replacements.isEmpty()) return originalMessage;
+            if (replacements.isEmpty()) return message;
 
             replacements.sort(Comparator.comparingInt(r -> -r.start));
-            StringBuilder filteredMessage = new StringBuilder(originalMessage);
+            StringBuilder filteredMessage = new StringBuilder(message);
             for (Replacement rep : replacements) {
                 filteredMessage.replace(rep.start, rep.start + rep.length, rep.replacement);
             }
             return filteredMessage.toString();
 
         } else {
-            String[] words = originalMessage.split("\\s+");
-            StringBuilder result = new StringBuilder(originalMessage.length() + 16);
+            String[] words = message.split("\\s+");
+            StringBuilder result = new StringBuilder(message.length() + 16);
             boolean changed = false;
 
             for (String word : words) {
                 String filteredWord = word;
                 for (Map.Entry<Pattern, String> entry : wordsManager.getWordsMap().entrySet()) {
-                    if (entry.getKey().matcher(word).find()) {
-                        String foundWord = entry.getKey().matcher(word).group(1);
+                    Matcher m = entry.getKey().matcher(word);
+                    if (m.find()) {
+                        String foundWord = m.group(1);
                         if (wordNormalizer.isSafeWord(foundWord)) break;
 
                         badWords.add(word);
@@ -155,7 +165,7 @@ public class FilterProcessor {
                 }
                 result.append(filteredWord).append(" ");
             }
-            return changed ? result.toString().trim() : originalMessage;
+            return changed ? result.toString().trim() : message;
         }
     }
 

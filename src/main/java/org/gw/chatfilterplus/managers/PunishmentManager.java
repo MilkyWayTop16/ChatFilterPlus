@@ -313,19 +313,23 @@ public class PunishmentManager {
     }
 
     private long parseDuration(String durationStr) {
+        if (durationStr == null || durationStr.isEmpty()) return 0;
+
         long duration = 0;
         StringBuilder number = new StringBuilder();
         for (char c : durationStr.toLowerCase().toCharArray()) {
             if (Character.isDigit(c)) {
                 number.append(c);
             } else if (number.length() > 0) {
-                long value = Long.parseLong(number.toString());
-                switch (c) {
-                    case 's' -> duration += value * 1000L;
-                    case 'm' -> duration += value * 60 * 1000L;
-                    case 'h' -> duration += value * 60 * 60 * 1000L;
-                    case 'd' -> duration += value * 24 * 60 * 60 * 1000L;
-                }
+                try {
+                    long value = Long.parseLong(number.toString());
+                    switch (c) {
+                        case 's' -> duration += value * 1000L;
+                        case 'm' -> duration += value * 60 * 1000L;
+                        case 'h' -> duration += value * 60 * 60 * 1000L;
+                        case 'd' -> duration += value * 24 * 60 * 60 * 1000L;
+                    }
+                } catch (NumberFormatException ignored) {}
                 number = new StringBuilder();
             }
         }

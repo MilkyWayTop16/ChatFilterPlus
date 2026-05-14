@@ -4,38 +4,29 @@ import lombok.Getter;
 import org.gw.chatfilterplus.ChatFilterPlus;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Pattern;
 
+@Getter
 public class LinksManager {
 
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
 
-    @Getter
-    private Pattern linkPattern;
-    private Pattern ipPattern;
-    private Pattern discordPattern;
-    private Set<String> normalizedDomains;
-    private String listFilterMode;
+    private volatile Pattern linkPattern;
+    private volatile Pattern ipPattern;
+    private volatile Pattern discordPattern;
+    private volatile Set<String> normalizedDomains;
+    private volatile String listFilterMode;
 
-    private Set<String> realTlds;
-    private Set<String> quickTriggers;
-    private int minDomainParts;
-    private boolean requireRealTld;
-    private boolean smartDetectionEnabled;
+    private volatile Set<String> realTlds;
+    private volatile Set<String> quickTriggers;
+    private volatile int minDomainParts;
+    private volatile boolean requireRealTld;
+    private volatile boolean smartDetectionEnabled;
 
     private static final Pattern INVISIBLE_CHARS = Pattern.compile("[\\u200B\\u200C\\u200D\\u2060\\uFEFF\\u00A0\\u1680\\u180E\\u2000-\\u200F\\u2028\\u2029\\u202F\\u205F\\u3000]+");
-
-    private static final Pattern DOT_OBFUSCATION = Pattern.compile(
-            "\\[dot\\]|\\(dot\\)|\\{dot\\}| dot |\\.dot\\.|\\s+dot\\s+|точка|тчк|т\\.ч\\.к\\.|период|собака|@|с точкой|с тчк|с периодом|dot|т\\.чк|тч\\.к|ком|ру",
-            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
-
     private static final Pattern SEPARATOR_CLEANUP = Pattern.compile("[#|\\-_/\\\\,;:]+");
-
     private static final Pattern DOMAIN_PATTERN = Pattern.compile("[a-z0-9-]{2,}\\.[a-z0-9-]{2,}");
 
     public LinksManager(ChatFilterPlus plugin, ConfigManager configManager) {
@@ -68,14 +59,12 @@ public class LinksManager {
 
         for (String domain : domains) {
             if (domain == null || domain.trim().isEmpty()) continue;
-
             String clean = domain.toLowerCase().trim()
                     .replaceAll("[\\u200B\\u200C\\u200D\\u2060\\uFEFF]", "")
                     .replaceAll("^(https?://)?", "")
                     .replaceAll("/.*$", "")
                     .replace(',', '.')
                     .replace(" . ", ".");
-
             if (!clean.isEmpty()) normalized.add(clean);
         }
 
@@ -87,42 +76,38 @@ public class LinksManager {
         smartDetectionEnabled = configManager.getLinksConfig().getBoolean("filter.smart-detection.enabled", true);
 
         List<String> triggers = configManager.getLinksConfig().getStringList("filter.smart-detection.quick-triggers");
-        quickTriggers = new HashSet<>();
+        Set<String> triggersSet = new HashSet<>();
         for (String t : triggers) {
-            if (t != null && !t.trim().isEmpty()) {
-                quickTriggers.add(t.toLowerCase().trim());
-            }
+            if (t != null && !t.trim().isEmpty()) triggersSet.add(t.toLowerCase().trim());
         }
+        this.quickTriggers = Set.copyOf(triggersSet);
 
         List<String> tldList = configManager.getLinksConfig().getStringList("filter.smart-detection.tlds");
-        realTlds = new HashSet<>();
+        Set<String> tldsSet = new HashSet<>();
         for (String tld : tldList) {
-            if (tld != null && !tld.trim().isEmpty()) {
-                realTlds.add(tld.toLowerCase().trim());
-            }
+            if (tld != null && !tld.trim().isEmpty()) tldsSet.add(tld.toLowerCase().trim());
         }
+        this.realTlds = Set.copyOf(tldsSet);
 
-        minDomainParts = configManager.getLinksConfig().getInt("filter.smart-detection.min-domain-parts", 2);
-        requireRealTld = configManager.getLinksConfig().getBoolean("filter.smart-detection.require-real-tld", true);
+        this.minDomainParts = configManager.getLinksConfig().getInt("filter.smart-detection.min-domain-parts", 2);
+        this.requireRealTld = configManager.getLinksConfig().getBoolean("filter.smart-detection.require-real-tld", true);
     }
 
     public boolean isLinkAllowed(String originalLink) {
         if (originalLink == null || originalLink.isEmpty()) return true;
 
-        if (smartDetectionEnabled) {
-            if (!quickLooksLikeLink(originalLink)) {
-                return true;
-            }
+        if (smartDetectionEnabled && !quickLooksLikeLink(originalLink)) {
+            return true;
         }
 
         String normalized = normalizeForDetection(originalLink);
         if (normalized.isEmpty()) return true;
 
-        if (smartDetectionEnabled) {
-            if (!isValidLinkAfterNormalization(normalized)) {
-                return true;
-            }
-        } else {
+        if (smartDetectionEnabled && !isValidLinkAfterNormalization(normalized)) {
+            return true;
+        }
+
+        if (!smartDetectionEnabled) {
             boolean looksLikeLink = ipPattern.matcher(normalized).find() ||
                     linkPattern.matcher(normalized).find() ||
                     discordPattern.matcher(normalized).find() ||
@@ -142,20 +127,13 @@ public class LinksManager {
         if (domain.isEmpty()) return true;
 
         boolean inList = normalizedDomains.contains(domain);
-
-        if ("whitelist".equals(listFilterMode)) {
-            return inList;
-        } else {
-            return !inList;
-        }
+        return "whitelist".equals(listFilterMode) ? inList : !inList;
     }
 
     private boolean quickLooksLikeLink(String text) {
         String lower = text.toLowerCase();
         for (String trigger : quickTriggers) {
-            if (lower.contains(trigger)) {
-                return true;
-            }
+            if (lower.contains(trigger)) return true;
         }
         return false;
     }
@@ -163,14 +141,10 @@ public class LinksManager {
     private boolean isValidLinkAfterNormalization(String normalized) {
         String[] parts = normalized.split("\\.");
         if (parts.length < minDomainParts) return false;
-
         if (requireRealTld) {
-            String lastPart = parts[parts.length - 1];
-            if (!realTlds.contains(lastPart)) {
-                return false;
-            }
+            String last = parts[parts.length - 1];
+            return realTlds.contains(last);
         }
-
         return true;
     }
 
@@ -178,7 +152,7 @@ public class LinksManager {
         if (text == null || text.isEmpty()) return "";
 
         String cleaned = INVISIBLE_CHARS.matcher(text).replaceAll("");
-        cleaned = DOT_OBFUSCATION.matcher(cleaned).replaceAll(".");
+        cleaned = replaceObfuscatedDots(cleaned);
         cleaned = SEPARATOR_CLEANUP.matcher(cleaned).replaceAll(".");
         cleaned = cleaned.replaceAll("[\\s,;:]+", ".");
         cleaned = cleaned.replaceAll("[^\\p{L}\\p{N}]+", ".");
@@ -186,8 +160,14 @@ public class LinksManager {
         cleaned = cleaned.replaceAll("^-+|-+$|^\\.+|\\.+$", "");
 
         cleaned = normalizeHomoglyphs(cleaned);
-
         return cleaned.toLowerCase();
+    }
+
+    private String replaceObfuscatedDots(String text) {
+        return text
+                .replaceAll("(?i)\\[dot\\]|\\(dot\\)|\\{dot\\}| dot |\\.dot\\.|\\s+dot\\s+", ".")
+                .replaceAll("(?i)точка|тчк|т\\.ч\\.к\\.|период|с точкой|с тчк|с периодом", ".")
+                .replaceAll("(?i)ком|ру|net|org|io", ".");
     }
 
     private String normalizeHomoglyphs(String text) {
@@ -246,9 +226,7 @@ public class LinksManager {
         if (domain == null || domain.trim().isEmpty()) return false;
 
         List<String> domains = new ArrayList<>(configManager.getLinksListFilterDomains());
-        if (domains.stream().anyMatch(d -> d.equalsIgnoreCase(domain))) {
-            return false;
-        }
+        if (domains.stream().anyMatch(d -> d.equalsIgnoreCase(domain))) return false;
 
         domains.add(domain);
         configManager.getLinksConfig().set("filter.links.list-filter.domains", domains);
@@ -282,10 +260,6 @@ public class LinksManager {
             plugin.console("&#FF5D00Ошибка при удалении домена из вайтлист ссылок: " + e.getMessage());
             return false;
         }
-    }
-
-    public String normalizeForDetectionPublic(String text) {
-        return normalizeForDetection(text);
     }
 
     public void reload() {

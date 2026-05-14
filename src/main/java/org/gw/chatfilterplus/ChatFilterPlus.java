@@ -38,7 +38,9 @@ public class ChatFilterPlus extends JavaPlugin {
             return;
         }
 
-        new BStats(this);
+        if (configManager.isBStatsEnabled()) {
+            new BStats(this);
+        }
 
         long loadTime = System.currentTimeMillis() - startTime;
         logStartupInfo(loadTime);
@@ -85,15 +87,7 @@ public class ChatFilterPlus extends JavaPlugin {
             eventPriority = EventPriority.LOWEST;
         }
 
-        Bukkit.getPluginManager().registerEvent(
-                PlayerCommandPreprocessEvent.class,
-                new CommandFilterListener(this, chatManager),
-                eventPriority,
-                (listener, event) -> ((CommandFilterListener) listener).onCommandPreprocess((PlayerCommandPreprocessEvent) event),
-                this,
-                !configManager.isCompatibilityAggressiveMode()
-        );
-
+        Bukkit.getPluginManager().registerEvents(new CommandFilterListener(this, chatManager), this);
         Bukkit.getPluginManager().registerEvents(new CommandSendListener(), this);
         Bukkit.getPluginManager().registerEvents(chatManager, this);
 
@@ -219,13 +213,26 @@ public class ChatFilterPlus extends JavaPlugin {
         console("&#00FF5A◆ ChatFilterPlus &f| Начало &#00FF5Aвыгрузки &fплагина...");
 
         if (logCleanupManager != null) {
-            console("&#FF5D00◆ ChatFilterPlus &f| Остановка &#FF5D00задач очистки логов &fв файлах...");
             logCleanupManager.stopLogCleanupTask();
             logCleanupManager.shutdown();
         }
+        if (messageCacheManager != null) {
+            messageCacheManager.clearCache();
+        }
+        if (antiSpamManager != null) {
+            antiSpamManager.reload();
+        }
+        if (punishmentManager != null) {
+            punishmentManager.reload();
+        }
+        if (notificationManager != null) {
+            notificationManager.reload();
+        }
+        if (updateChecker != null) {
+            updateChecker.reload();
+        }
 
         long unloadTime = System.currentTimeMillis() - startTime;
-
         logShutdownInfo(unloadTime);
     }
 
@@ -235,7 +242,7 @@ public class ChatFilterPlus extends JavaPlugin {
     }
 
     public void log(String message) {
-        if (configManager.isConsoleLogsEnabled()) {
+        if (configManager != null && configManager.isConsoleLogsEnabled()) {
             console("&#ffff00◆ ChatFilterPlus &f| " + message);
         }
     }

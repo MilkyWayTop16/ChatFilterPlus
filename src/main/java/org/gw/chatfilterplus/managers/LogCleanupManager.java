@@ -73,31 +73,30 @@ public class LogCleanupManager {
     }
 
     public void appendAndCleanBadWordsLog(String entry) {
-        appendAndClean(badWordsLogFile, entry, configManager.getBadWordsConfig(), "bad-words");
+        appendLogAsync(badWordsLogFile, entry);
     }
 
     public void appendAndCleanLinksLog(String entry) {
-        appendAndClean(linksLogFile, entry, configManager.getLinksConfig(), "links");
+        appendLogAsync(linksLogFile, entry);
     }
 
     public void appendAndCleanCapsLog(String entry) {
-        appendAndClean(capsLogFile, entry, configManager.getCapsConfig(), "caps");
+        appendLogAsync(capsLogFile, entry);
     }
 
     public void appendAndCleanBlockedWordsLog(String entry) {
-        appendAndClean(blockedWordsLogFile, entry, configManager.getBlockedWordsConfig(), "blocked-words");
+        appendLogAsync(blockedWordsLogFile, entry);
     }
 
     public void appendAndCleanAntiSpamLog(String entry) {
-        appendAndClean(antiSpamLogFile, entry, configManager.getAntiSpamConfig(), "anti-spam");
+        appendLogAsync(antiSpamLogFile, entry);
     }
 
-    private void appendAndClean(File file, String entry, org.bukkit.configuration.ConfigurationSection cfg, String section) {
+    private void appendLogAsync(File file, String entry) {
         executor.submit(() -> {
             try {
                 ensureParentDirectory(file);
                 appendLog(file, entry);
-                cleanup(file, cfg, section);
             } catch (IOException e) {
                 plugin.console("Ошибка записи в " + file.getName() + ": " + e.getMessage());
             }

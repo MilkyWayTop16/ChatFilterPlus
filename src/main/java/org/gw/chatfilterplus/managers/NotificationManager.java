@@ -10,11 +10,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Getter
 public class NotificationManager {
@@ -22,20 +21,24 @@ public class NotificationManager {
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
     private final HttpClient httpClient;
-    private final Map<UUID, Boolean> notificationsEnabled = new ConcurrentHashMap<>();
+    private final AtomicReference<Map<UUID, Boolean>> notificationsEnabledRef =
+            new AtomicReference<>(new ConcurrentHashMap<>());
 
     public NotificationManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
         this.configManager = configManager;
-        this.httpClient = HttpClient.newHttpClient();
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
     }
 
     public boolean isNotificationsEnabled(Player player) {
-        return notificationsEnabled.getOrDefault(player.getUniqueId(), player.hasPermission("chatfilterplus.admin.notify"));
+        Map<UUID, Boolean> map = notificationsEnabledRef.get();
+        return map.getOrDefault(player.getUniqueId(), player.hasPermission("chatfilterplus.admin.notify"));
     }
 
     public void setNotificationsEnabled(Player player, boolean enabled) {
-        notificationsEnabled.put(player.getUniqueId(), enabled);
+        notificationsEnabledRef.get().put(player.getUniqueId(), enabled);
     }
 
     public void notifyPlayer(Player player, FilterType type, String firstItem) {
@@ -45,7 +48,9 @@ public class NotificationManager {
     public void notifyAdmins(Player player, FilterType type, List<String> items) {
         Map<String, String> placeholders = createPlaceholders(player, items);
 
-        for (Player admin : Bukkit.getOnlinePlayers()) {
+        List<Player> onlineAdmins = new ArrayList<>(Bukkit.getOnlinePlayers());
+
+        for (Player admin : onlineAdmins) {
             if (!isNotificationsEnabled(admin)) continue;
             if (configManager.isAdminSelfNotifyEnabled() && admin.equals(player)) continue;
 
@@ -106,7 +111,7 @@ public class NotificationManager {
     }
 
     private Map<String, String> createPlaceholders(Player player, List<String> items) {
-        Map<String, String> ph = new java.util.HashMap<>();
+        Map<String, String> ph = new HashMap<>();
         ph.put("player", player != null ? player.getName() : "Console");
         ph.put("words", String.join(", ", items));
         ph.put("links", String.join(", ", items));
@@ -143,6 +148,6 @@ public class NotificationManager {
     }
 
     public void reload() {
-        notificationsEnabled.clear();
+        notificationsEnabledRef.set(new ConcurrentHashMap<>());
     }
 }

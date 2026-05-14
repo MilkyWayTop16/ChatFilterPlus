@@ -35,73 +35,73 @@ public class ConfigManager {
     private final File blockedWordsFile;
     private final File antiSpamFile;
 
-    private boolean updateCheckerEnabled;
-    private String updateNotifyMode;
-    private int updatePeriodicIntervalHours;
-    private boolean consoleLogsEnabled;
-    private boolean bStatsEnabled;
-    private int cacheMaxSize;
-    private long cacheCleanupRetentionMillis;
-    private String compatibilityEventPriority;
-    private boolean compatibilityAggressiveMode;
-    private boolean commandFilteringEnabled;
-    private List<String> commandFilteringCommands;
+    private volatile boolean updateCheckerEnabled;
+    private volatile String updateNotifyMode;
+    private volatile int updatePeriodicIntervalHours;
+    private volatile boolean consoleLogsEnabled;
+    private volatile boolean bStatsEnabled;
+    private volatile int cacheMaxSize;
+    private volatile long cacheCleanupRetentionMillis;
+    private volatile String compatibilityEventPriority;
+    private volatile boolean compatibilityAggressiveMode;
+    private volatile boolean commandFilteringEnabled;
+    private volatile List<String> commandFilteringCommands;
 
-    private boolean antiSpamEnabled;
-    private boolean generalCooldownEnabled;
-    private int generalCooldownSeconds;
-    private int generalCooldownIgnoreIfLongerThan;
-    private boolean similarMessageCooldownEnabled;
-    private int similarMessageCooldownSeconds;
-    private int similarMessageSimilarityPercent;
-    private int generalCooldownMinLength;
-    private int similarMessageCooldownIgnoreIfLongerThan;
-    private int similarMessageCooldownMinLength;
-    private boolean characterFloodEnabled;
-    private int characterFloodMaxRepeatingChars;
-    private int characterFloodMaxRepeatingPattern;
-    private int characterFloodCooldownSeconds;
+    private volatile boolean antiSpamEnabled;
+    private volatile boolean generalCooldownEnabled;
+    private volatile int generalCooldownSeconds;
+    private volatile int generalCooldownIgnoreIfLongerThan;
+    private volatile boolean similarMessageCooldownEnabled;
+    private volatile int similarMessageCooldownSeconds;
+    private volatile int similarMessageSimilarityPercent;
+    private volatile int generalCooldownMinLength;
+    private volatile int similarMessageCooldownIgnoreIfLongerThan;
+    private volatile int similarMessageCooldownMinLength;
+    private volatile boolean characterFloodEnabled;
+    private volatile int characterFloodMaxRepeatingChars;
+    private volatile int characterFloodMaxRepeatingPattern;
+    private volatile int characterFloodCooldownSeconds;
 
-    private boolean badWordsFilterEnabled;
-    private String badWordsFilterMode;
-    private String badWordsFilterLevel;
-    private String badWordsFilterReplacement;
-    private List<String> badWordsExceptionPlayers;
-    private List<String> badWordsExceptionGroups;
+    private volatile boolean badWordsFilterEnabled;
+    private volatile String badWordsFilterMode;
+    private volatile String badWordsFilterLevel;
+    private volatile String badWordsFilterReplacement;
+    private volatile List<String> badWordsExceptionPlayers;
+    private volatile List<String> badWordsExceptionGroups;
 
-    private boolean linksFilterEnabled;
-    private String linksFilterMode;
-    private String linksFilterReplacement;
-    private String linksRegex;
-    private boolean linksListFilterEnabled;
-    private String linksListFilterMode;
-    private List<String> linksListFilterDomains;
-    private List<String> linksExceptionPlayers;
-    private List<String> linksExceptionGroups;
+    private volatile boolean linksFilterEnabled;
+    private volatile String linksFilterMode;
+    private volatile String linksFilterReplacement;
+    private volatile String linksRegex;
+    private volatile boolean linksListFilterEnabled;
+    private volatile String linksListFilterMode;
+    private volatile List<String> linksListFilterDomains;
+    private volatile List<String> linksExceptionPlayers;
+    private volatile List<String> linksExceptionGroups;
 
-    private boolean capsFilterEnabled;
-    private String capsFilterMode;
-    private int capsMinLength;
-    private int capsMaxPercent;
-    private boolean capsIgnoreNonLetters;
-    private String capsNotificationPriorityBadwords;
-    private String capsFilterPriorityBadwords;
-    private String capsNotificationPriorityBlockedwords;
-    private String capsFilterPriorityBlockedwords;
-    private List<String> capsExceptionPlayers;
-    private List<String> capsExceptionGroups;
+    private volatile boolean capsFilterEnabled;
+    private volatile String capsFilterMode;
+    private volatile int capsMinLength;
+    private volatile int capsMaxPercent;
+    private volatile boolean capsIgnoreNonLetters;
+    private volatile String capsNotificationPriorityBadwords;
+    private volatile String capsFilterPriorityBadwords;
+    private volatile String capsNotificationPriorityBlockedwords;
+    private volatile String capsFilterPriorityBlockedwords;
+    private volatile List<String> capsExceptionPlayers;
+    private volatile List<String> capsExceptionGroups;
 
-    private boolean blockedWordsFilterEnabled;
-    private String blockedWordsFilterMode;
-    private String blockedWordsFilterReplacement;
-    private String blockedWordsFilterLevel;
-    private List<String> blockedWordsExceptionPlayers;
-    private List<String> blockedWordsExceptionGroups;
+    private volatile boolean blockedWordsFilterEnabled;
+    private volatile String blockedWordsFilterMode;
+    private volatile String blockedWordsFilterReplacement;
+    private volatile String blockedWordsFilterLevel;
+    private volatile List<String> blockedWordsExceptionPlayers;
+    private volatile List<String> blockedWordsExceptionGroups;
 
-    private List<String> antiSpamExceptionPlayers;
-    private List<String> antiSpamExceptionGroups;
+    private volatile List<String> antiSpamExceptionPlayers;
+    private volatile List<String> antiSpamExceptionGroups;
 
-    private boolean adminSelfNotifyEnabled;
+    private volatile boolean adminSelfNotifyEnabled;
 
     private final Map<String, List<ParsedAction>> parsedActionCache = new ConcurrentHashMap<>();
 
@@ -128,8 +128,8 @@ public class ConfigManager {
             loadCapsConfig();
             loadBlockedWordsConfig();
             loadAntiSpamConfig();
-            loadCommonSettings();
-            cacheHotSettings();
+            loadCommonSettingsInternal();
+            cacheHotSettingsInternal();
             parsedActionCache.clear();
             preParseAllActions();
         }
@@ -169,38 +169,38 @@ public class ConfigManager {
         return new ParsedAction(actionLine.substring(1, end).toLowerCase(), actionLine.substring(end + 1).trim());
     }
 
-    private void loadCommonSettings() {
+    private void loadCommonSettingsInternal() {
         consoleLogsEnabled = mainConfig.getBoolean("settings.logs.console.enabled", false);
         cacheMaxSize = mainConfig.getInt("settings.cache.max-size", 1000);
         cacheCleanupRetentionMillis = parseRetentionPeriod(mainConfig.getString("settings.cache.cleanup.retention-period", "5m"));
         bStatsEnabled = mainConfig.getBoolean("settings.bstats.enabled", true);
         updateCheckerEnabled = mainConfig.getBoolean("settings.update-checker.enabled", true);
         updateNotifyMode = mainConfig.getString("settings.update-checker.notify-mode", "both").toLowerCase();
-        updatePeriodicIntervalHours = mainConfig.getInt("settings.update-checker.periodic-interval-hours", 6);
+        updatePeriodicIntervalHours = Math.max(1, mainConfig.getInt("settings.update-checker.periodic-interval-hours", 6));
         compatibilityEventPriority = mainConfig.getString("settings.compatibility.event-priority", "lowest").toLowerCase();
         compatibilityAggressiveMode = mainConfig.getBoolean("settings.compatibility.aggressive-mode", false);
         commandFilteringEnabled = mainConfig.getBoolean("settings.command-filtering.enabled", true);
-        commandFilteringCommands = mainConfig.getStringList("settings.command-filtering.commands");
+        commandFilteringCommands = Collections.unmodifiableList(cleanStringList(mainConfig.getStringList("settings.command-filtering.commands")));
 
         adminSelfNotifyEnabled = mainConfig.getBoolean("settings.admin-self-notify.enabled", true);
 
         antiSpamEnabled = antiSpamConfig.getBoolean("filter.anti-spam.enabled", true);
         generalCooldownEnabled = antiSpamConfig.getBoolean("filter.anti-spam.general-cooldown.enabled", true);
-        generalCooldownSeconds = antiSpamConfig.getInt("filter.anti-spam.general-cooldown.seconds", 3);
+        generalCooldownSeconds = Math.max(0, antiSpamConfig.getInt("filter.anti-spam.general-cooldown.seconds", 3));
         generalCooldownIgnoreIfLongerThan = antiSpamConfig.getInt("filter.anti-spam.general-cooldown.ignore-if-longer-than", -1);
         similarMessageCooldownEnabled = antiSpamConfig.getBoolean("filter.anti-spam.similar-message-cooldown.enabled", true);
-        similarMessageCooldownSeconds = antiSpamConfig.getInt("filter.anti-spam.similar-message-cooldown.seconds", 10);
-        similarMessageSimilarityPercent = antiSpamConfig.getInt("filter.anti-spam.similar-message-cooldown.similarity-percent", 75);
+        similarMessageCooldownSeconds = Math.max(0, antiSpamConfig.getInt("filter.anti-spam.similar-message-cooldown.seconds", 10));
+        similarMessageSimilarityPercent = Math.max(50, Math.min(100, antiSpamConfig.getInt("filter.anti-spam.similar-message-cooldown.similarity-percent", 75)));
         generalCooldownMinLength = antiSpamConfig.getInt("filter.anti-spam.general-cooldown.min-length", -1);
         similarMessageCooldownIgnoreIfLongerThan = antiSpamConfig.getInt("filter.anti-spam.similar-message-cooldown.ignore-if-longer-than", -1);
-        similarMessageCooldownMinLength = antiSpamConfig.getInt("filter.anti-spam.similar-message-cooldown.min-length", 10);
+        similarMessageCooldownMinLength = Math.max(0, antiSpamConfig.getInt("filter.anti-spam.similar-message-cooldown.min-length", 10));
         characterFloodEnabled = antiSpamConfig.getBoolean("filter.anti-spam.character-flood.enabled", true);
-        characterFloodMaxRepeatingChars = antiSpamConfig.getInt("filter.anti-spam.character-flood.max-repeating-chars", 5);
-        characterFloodMaxRepeatingPattern = antiSpamConfig.getInt("filter.anti-spam.character-flood.max-repeating-pattern", 3);
-        characterFloodCooldownSeconds = antiSpamConfig.getInt("filter.anti-spam.character-flood.cooldown-seconds", 8);
+        characterFloodMaxRepeatingChars = Math.max(2, antiSpamConfig.getInt("filter.anti-spam.character-flood.max-repeating-chars", 5));
+        characterFloodMaxRepeatingPattern = Math.max(1, antiSpamConfig.getInt("filter.anti-spam.character-flood.max-repeating-pattern", 3));
+        characterFloodCooldownSeconds = Math.max(0, antiSpamConfig.getInt("filter.anti-spam.character-flood.cooldown-seconds", 8));
     }
 
-    private void cacheHotSettings() {
+    private void cacheHotSettingsInternal() {
         badWordsFilterEnabled = badWordsConfig.getBoolean("filter.bad-words.enabled", true);
         badWordsFilterMode = badWordsConfig.getString("filter.bad-words.mode", "send-and-notify").toLowerCase();
         badWordsFilterLevel = badWordsConfig.getString("filter.bad-words.level", "high").toLowerCase();
@@ -220,8 +220,8 @@ public class ConfigManager {
 
         capsFilterEnabled = capsConfig.getBoolean("filter.caps.enabled", false);
         capsFilterMode = capsConfig.getString("filter.caps.mode", "replace-and-notify").toLowerCase();
-        capsMinLength = capsConfig.getInt("filter.caps.min-length", 5);
-        capsMaxPercent = capsConfig.getInt("filter.caps.max-caps-percent", 70);
+        capsMinLength = Math.max(1, capsConfig.getInt("filter.caps.min-length", 5));
+        capsMaxPercent = Math.max(0, Math.min(100, capsConfig.getInt("filter.caps.max-caps-percent", 70)));
         capsIgnoreNonLetters = capsConfig.getBoolean("filter.caps.ignore-non-letters", true);
         capsNotificationPriorityBadwords = capsConfig.getString("filter.caps.badwords-priority.notification-priority", "badwords").toLowerCase();
         capsFilterPriorityBadwords = capsConfig.getString("filter.caps.badwords-priority.filter-priority", "both").toLowerCase();
@@ -302,6 +302,7 @@ public class ConfigManager {
     public boolean reload() {
         synchronized (reloadLock) {
             try {
+                parsedActionCache.clear();
                 loadAllConfigs();
                 return true;
             } catch (Exception e) {

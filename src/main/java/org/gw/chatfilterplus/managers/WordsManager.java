@@ -10,6 +10,7 @@ import org.gw.chatfilterplus.utils.PatternFactory;
 import java.io.File;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 @Getter
@@ -17,15 +18,20 @@ public class WordsManager {
 
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
-    private final Map<Pattern, String> wordsMap = new ConcurrentHashMap<>();
+
+    private final AtomicReference<Map<Pattern, String>> wordsMapRef =
+            new AtomicReference<>(new ConcurrentHashMap<>());
 
     public WordsManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
         this.configManager = configManager;
     }
 
+    public Map<Pattern, String> getWordsMap() {
+        return wordsMapRef.get();
+    }
+
     public void loadWords() {
-        wordsMap.clear();
         PatternFactory.clearCache();
 
         String filterLevel = configManager.getBadWordsFilterLevel();
@@ -34,16 +40,22 @@ public class WordsManager {
         List<String> sortedWords = new ArrayList<>(badWordsList);
         sortedWords.sort((a, b) -> Integer.compare(b.length(), a.length()));
 
+        Map<Pattern, String> newMap = new ConcurrentHashMap<>(sortedWords.size());
+
         for (String word : sortedWords) {
             try {
                 Pattern pattern = PatternFactory.createPattern(word, filterLevel);
-                wordsMap.put(pattern, word);
+                if (pattern != null) {
+                    newMap.put(pattern, word);
+                }
             } catch (Exception e) {
                 plugin.console("&#FF5D00Ошибка создания паттерна для слова: " + word);
             }
         }
 
-        plugin.log("Загружено &#ffff00" + wordsMap.size() + " &fплохих слов (уровень фильтра: &#ffff00" + filterLevel + "&f)");
+        wordsMapRef.set(newMap);
+
+        plugin.log("Загружено &#ffff00" + newMap.size() + " &fплохих слов (уровень фильтра: &#ffff00" + filterLevel + "&f)");
     }
 
     public void reloadSafeWords() {
@@ -65,20 +77,20 @@ public class WordsManager {
     public boolean addBadWord(CommandSender sender, String word, String replacement) {
         if (word == null || word.trim().isEmpty()) return false;
 
-        String trimmed = word.trim();
-        FileConfiguration badWordsConfig = configManager.getBadWordsConfig();
-        List<String> badWordsList = badWordsConfig.getStringList("bad-words");
+        String trimmed = word.trim().toLowerCase();
+        FileConfiguration cfg = configManager.getBadWordsConfig();
+        List<String> list = new ArrayList<>(cfg.getStringList("bad-words"));
 
-        if (badWordsList.contains(trimmed)) {
+        if (list.stream().anyMatch(w -> w.equalsIgnoreCase(trimmed))) {
             HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-word-already-exists", "").replace("{word}", trimmed));
             return false;
         }
 
-        badWordsList.add(trimmed);
-        badWordsConfig.set("bad-words", badWordsList);
+        list.add(trimmed);
+        cfg.set("bad-words", list);
 
         try {
-            badWordsConfig.save(new File(plugin.getDataFolder(), "bad-words.yml"));
+            cfg.save(new File(plugin.getDataFolder(), "bad-words.yml"));
             loadWords();
             HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-bad-word-success", "").replace("{word}", trimmed));
             plugin.log("Добавлено плохое слово &#ffff00" + trimmed);
@@ -94,19 +106,19 @@ public class WordsManager {
         if (word == null || word.trim().isEmpty()) return;
 
         String trimmed = word.trim();
-        FileConfiguration badWordsConfig = configManager.getBadWordsConfig();
-        List<String> safeWords = badWordsConfig.getStringList("safe-words");
+        FileConfiguration cfg = configManager.getBadWordsConfig();
+        List<String> list = new ArrayList<>(cfg.getStringList("safe-words"));
 
-        if (safeWords.contains(trimmed)) {
+        if (list.stream().anyMatch(w -> w.equalsIgnoreCase(trimmed))) {
             HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-safe-word-already-exists", "").replace("{word}", trimmed));
             return;
         }
 
-        safeWords.add(trimmed);
-        badWordsConfig.set("safe-words", safeWords);
+        list.add(trimmed);
+        cfg.set("safe-words", list);
 
         try {
-            badWordsConfig.save(new File(plugin.getDataFolder(), "bad-words.yml"));
+            cfg.save(new File(plugin.getDataFolder(), "bad-words.yml"));
             reloadSafeWords();
             HexColors.sendMessage(sender, plugin.getConfig().getString("messages.add-safe-word-success", "").replace("{word}", trimmed));
             plugin.log("Добавлено безопасное слово &#ffff00" + trimmed);
@@ -120,16 +132,16 @@ public class WordsManager {
         if (word == null || word.trim().isEmpty()) return false;
 
         String trimmed = word.trim();
-        FileConfiguration badWordsConfig = configManager.getBadWordsConfig();
-        List<String> badWordsList = badWordsConfig.getStringList("bad-words");
+        FileConfiguration cfg = configManager.getBadWordsConfig();
+        List<String> list = new ArrayList<>(cfg.getStringList("bad-words"));
 
-        if (!badWordsList.contains(trimmed)) return false;
+        boolean removed = list.removeIf(w -> w.equalsIgnoreCase(trimmed));
+        if (!removed) return false;
 
-        badWordsList.remove(trimmed);
-        badWordsConfig.set("bad-words", badWordsList);
+        cfg.set("bad-words", list);
 
         try {
-            badWordsConfig.save(new File(plugin.getDataFolder(), "bad-words.yml"));
+            cfg.save(new File(plugin.getDataFolder(), "bad-words.yml"));
             loadWords();
             return true;
         } catch (Exception e) {
@@ -142,16 +154,16 @@ public class WordsManager {
         if (word == null || word.trim().isEmpty()) return false;
 
         String trimmed = word.trim();
-        FileConfiguration badWordsConfig = configManager.getBadWordsConfig();
-        List<String> safeWords = new ArrayList<>(badWordsConfig.getStringList("safe-words"));
+        FileConfiguration cfg = configManager.getBadWordsConfig();
+        List<String> list = new ArrayList<>(cfg.getStringList("safe-words"));
 
-        if (!safeWords.contains(trimmed)) return false;
+        boolean removed = list.removeIf(w -> w.equalsIgnoreCase(trimmed));
+        if (!removed) return false;
 
-        safeWords.remove(trimmed);
-        badWordsConfig.set("safe-words", safeWords);
+        cfg.set("safe-words", list);
 
         try {
-            badWordsConfig.save(new File(plugin.getDataFolder(), "bad-words.yml"));
+            cfg.save(new File(plugin.getDataFolder(), "bad-words.yml"));
             reloadSafeWords();
             return true;
         } catch (Exception e) {

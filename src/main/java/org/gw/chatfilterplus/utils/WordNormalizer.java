@@ -37,12 +37,16 @@ public class WordNormalizer {
         }
 
         String cacheKey = text + ":" + filterLevel.toLowerCase();
+
+        if (normalizationCache.size() > MAX_CACHE_SIZE) {
+            normalizationCache.clear();
+        }
+
         return normalizationCache.computeIfAbsent(cacheKey, k -> performNormalization(text, filterLevel));
     }
 
     private static String performNormalization(String text, String filterLevel) {
         String normalized = text.toLowerCase();
-
         normalized = SPECIAL_CHARS.matcher(normalized).replaceAll("");
 
         if (normalized.length() < 3) {
@@ -60,6 +64,7 @@ public class WordNormalizer {
             return false;
         }
         String cleaned = SPECIAL_CHARS.matcher(word.toLowerCase()).replaceAll("");
+        if (cleaned.length() < 3) return false;
         return safeWordsTrie.contains(cleaned);
     }
 
