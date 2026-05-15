@@ -53,7 +53,7 @@ settings:
     #   on-join — уведомлять только при заходе администратора
     #   periodic — уведомлять каждое определённое кол-во часов (в консоль и админам)
     #   both — и при старте, и при заходе, и периодически
-    notify-mode: periodic
+    notify-mode: both
     # Интервал периодической проверки только для режимов "periodic" и "both" (в часах)
     periodic-interval-hours: 6
 
@@ -225,18 +225,18 @@ actions:
   reload:
     configs:
       success:
-        - "[message] &#FFFF00◆ &#FFEF00C&#FFE600h&#FFDE00a&#FFD600t&#FFCE00F&#FFC600i&#FFBE00l&#FFB500t&#FFAD00e&#FFA500r &f| Все .yml-файлы &#ffff00успешно &fперезагружены за &#ffff00{time}мс."
-        - "[message-console] &#FFFF00◆ &#FFEF00C&#FFE600h&#FFDE00a&#FFD600t&#FFCE00F&#FFC600i&#FFBE00l&#FFB500t&#FFAD00e&#FFA500r &f| Все .yml-файлы &#ffff00успешно &fперезагружены за &#ffff00{time}мс."
+        - "[message] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| Все .yml-файлы &#ffff00успешно &fперезагружены за &#ffff00{time}мс."
+        - "[message-console] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| Все .yml-файлы &#ffff00успешно &fперезагружены за &#ffff00{time}мс."
         - "[sound] ENTITY_PLAYER_LEVELUP"
     cache:
       success:
-        - "[message] &#FFFF00◆ &#FFEF00C&#FFE600h&#FFDE00a&#FFD600t&#FFCE00F&#FFC600i&#FFBE00l&#FFB500t&#FFAD00e&#FFA500r &f| &fВесь кэш сообщений &#ffff00успешно &fочищен за &#ffff00{time}мс."
-        - "[message-console] &#FFFF00◆ &#FFEF00C&#FFE600h&#FFDE00a&#FFD600t&#FFCE00F&#FFC600i&#FFBE00l&#FFB500t&#FFAD00e&#FFA500r &f| &fВесь кэш сообщений &#ffff00успешно &fочищен за &#ffff00{time}мс."
+        - "[message] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| &fВесь кэш сообщений &#ffff00успешно &fочищен за &#ffff00{time}мс."
+        - "[message-console] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| &fВесь кэш сообщений &#ffff00успешно &fочищен за &#ffff00{time}мс."
         - "[sound] ITEM_BOTTLE_FILL"
     all:
       success:
-        - "[message] &#FFFF00◆ &#FFEF00C&#FFE600h&#FFDE00a&#FFD600t&#FFCE00F&#FFC600i&#FFBE00l&#FFB500t&#FFAD00e&#FFA500r &f| &fПлагин полностью &#ffff00успешно &fперезагружен за &#FFFF00{time}мс."
-        - "[message-console] &#FFFF00◆ &#FFEF00C&#FFE600h&#FFDE00a&#FFD600t&#FFCE00F&#FFC600i&#FFBE00l&#FFB500t&#FFAD00e&#FFA500r &f| &fПлагин полностью &#ffff00успешно &fперезагружен за &#FFFF00{time}мс."
+        - "[message] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| &fПлагин полностью &#ffff00успешно &fперезагружен за &#FFFF00{time}мс."
+        - "[message-console] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| &fПлагин полностью &#ffff00успешно &fперезагружен за &#FFFF00{time}мс."
         - "[sound] ENTITY_PLAYER_LEVELUP"
     failure:
       - "[message] &#FB8808▶ Ошибка! &fПочему-то &#FB8808не удалось &fперезагрузить плагин (Смотрите подробности в консоли)..."
@@ -258,11 +258,11 @@ actions:
 
   update:
     available:
-      - "[message] "
-      - "[message] &#00FF5A▶ &fИтак, хочу сказать, что у меня &#00FF5Aпоявилась новая &fверсия &#ffff00{latest-version}&f, а текущая — &#ffff00v{current-version}&f, так что советую обновить меня)"
-      - "[message] "
-      - "[message] &#00FF5A◆ &fСкачать новую версию можно тут: &#00FF5A{download-link}"
-      - "[message] "
+      - "[message] &r "
+      - "[message] &#ffff00▶ &fИтак, хочу сказать, что у меня &#ffff00появилась новая &fверсия &#ffff00{latest-version}&f, а текущая — &#ffff00v{current-version}&f, так что советую обновить меня)"
+      - "[message] &r "
+      - "[message] &#ffff00◆ &fСкачать новую версию можно тут: &#ffff00{download-link}"
+      - "[message] &r "
       - "[message-console] &#ffff00◆ ChatFilterPlus &f| Доступна новая версия &#ffff00{latest-version}&f, а текущая — &#ffff00v{current-version}&f, так что можно обновить тут: &#ffff00{download-link}"
       - "[sound] ENTITY_PLAYER_LEVELUP"
 

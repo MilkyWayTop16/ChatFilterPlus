@@ -166,7 +166,7 @@ public class ConfigManager {
         if (actionLine == null || !actionLine.startsWith("[")) return null;
         int end = actionLine.indexOf("]");
         if (end == -1) return null;
-        return new ParsedAction(actionLine.substring(1, end).toLowerCase(), actionLine.substring(end + 1).trim());
+        return new ParsedAction(actionLine.substring(1, end).toLowerCase(), actionLine.substring(end + 1));
     }
 
     private void loadCommonSettingsInternal() {
