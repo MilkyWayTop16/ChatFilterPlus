@@ -88,13 +88,14 @@ public class MessageCacheManager {
     public CachedMessage analyzeAndCacheMessage(String originalMessage,
                                                 boolean bypassBadWords,
                                                 boolean bypassLinks,
-                                                boolean bypassBlockedWords) {
+                                                boolean bypassBlockedWords,
+                                                boolean bypassCaps) {
 
         if (cacheSize <= 0) {
-            return filterProcessor.processMessage(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords);
+            return filterProcessor.processMessage(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
         }
 
-        String cacheKey = originalMessage + "|" + bypassBadWords + "|" + bypassLinks + "|" + bypassBlockedWords;
+        String cacheKey = originalMessage + "|" + bypassBadWords + "|" + bypassLinks + "|" + bypassBlockedWords + "|" + bypassCaps;
 
         CachedMessage cached = messageCache.get(cacheKey);
         if (cached != null) {
@@ -107,7 +108,7 @@ public class MessageCacheManager {
             }
         }
 
-        CachedMessage result = filterProcessor.processMessage(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords);
+        CachedMessage result = filterProcessor.processMessage(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
 
         if (!result.getBadWords().isEmpty() || !result.getLinks().isEmpty() || !result.getBlockedWords().isEmpty()) {
             evictIfNeeded();

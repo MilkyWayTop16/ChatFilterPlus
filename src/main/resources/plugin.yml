@@ -1,5 +1,5 @@
 name: ChatFilterPlus
-version: 2.0
+version: 2.1
 main: org.gw.chatfilterplus.ChatFilterPlus
 author: vkusniy_milkyway
 api-version: '1.16'

@@ -123,8 +123,9 @@ public class ChatManager implements Listener {
             }
         }
 
+        // ← ИСПРАВЛЕНО: теперь 5 параметров
         MessageCacheManager.CachedMessage cached = cacheManager.analyzeAndCacheMessage(
-                originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords);
+                originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
 
         String finalMessage = determineFinalMessage(cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords);
 

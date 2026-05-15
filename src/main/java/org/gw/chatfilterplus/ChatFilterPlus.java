@@ -52,7 +52,7 @@ public class ChatFilterPlus extends JavaPlugin {
         configManager = new ConfigManager(this);
         configManager.loadAllConfigs();
 
-        console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aменеджеров &fи &#00FF5Aсистемы кэширования...");
+        console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aменеджеров &fи &#00FF5Aсистемы кэширования&f...");
         wordsManager = new WordsManager(this, configManager);
         wordsManager.loadWords();
 
@@ -219,9 +219,6 @@ public class ChatFilterPlus extends JavaPlugin {
         if (messageCacheManager != null) {
             messageCacheManager.clearCache();
         }
-        if (antiSpamManager != null) {
-            antiSpamManager.reload();
-        }
         if (punishmentManager != null) {
             punishmentManager.reload();
         }
@@ -229,7 +226,7 @@ public class ChatFilterPlus extends JavaPlugin {
             notificationManager.reload();
         }
         if (updateChecker != null) {
-            updateChecker.reload();
+            updateChecker.shutdown();
         }
 
         long unloadTime = System.currentTimeMillis() - startTime;

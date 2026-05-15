@@ -50,8 +50,12 @@ public class UpdateChecker implements Listener {
         startChecker();
     }
 
+    public void shutdown() {
+        cancelPeriodicTask();
+    }
+
     private void startChecker() {
-        if (!plugin.getConfigManager().isUpdateCheckerEnabled()) {
+        if (!plugin.isEnabled() || !plugin.getConfigManager().isUpdateCheckerEnabled()) {
             return;
         }
 
@@ -80,6 +84,8 @@ public class UpdateChecker implements Listener {
     }
 
     private void checkForUpdate() {
+        if (!plugin.isEnabled()) return;
+
         long now = System.currentTimeMillis();
         if (now - lastCheckTime < MIN_CHECK_INTERVAL) {
             return;
