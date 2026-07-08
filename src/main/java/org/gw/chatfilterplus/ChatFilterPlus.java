@@ -243,4 +243,8 @@ public class ChatFilterPlus extends JavaPlugin {
             console("&#ffff00◆ ChatFilterPlus &f| " + message);
         }
     }
+
+    public void error(String message) {
+        Bukkit.getConsoleSender().sendMessage(HexColors.translate("&#FF5D00◆ ChatFilterPlus &f| " + message));
+    }
 }

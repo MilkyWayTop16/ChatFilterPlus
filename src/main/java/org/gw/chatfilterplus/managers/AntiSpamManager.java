@@ -183,12 +183,9 @@ public class AntiSpamManager {
     private void cleanupOldEntries() {
         long now = System.currentTimeMillis();
 
-        lastCharacterFlood.entrySet().removeIf(entry ->
-                Bukkit.getPlayer(entry.getKey()) == null || now - entry.getValue() > ENTRY_LIFETIME_MILLIS);
+        lastCharacterFlood.entrySet().removeIf(entry -> now - entry.getValue() > ENTRY_LIFETIME_MILLIS);
 
         playerHistory.entrySet().removeIf(entry -> {
-            if (Bukkit.getPlayer(entry.getKey()) == null) return true;
-
             Deque<RecentMessage> history = entry.getValue();
             history.removeIf(msg -> now - msg.timestamp > ENTRY_LIFETIME_MILLIS);
             return history.isEmpty();

@@ -20,6 +20,8 @@ public class FilterProcessor {
     private final BlockedWordsManager blockedWordsManager;
     private final WordNormalizer wordNormalizer;
 
+    private static final Pattern TOKEN_PATTERN = Pattern.compile("\\S+");
+
     public FilterProcessor(ChatFilterPlus plugin, ConfigManager configManager, WordsManager wordsManager,
                            LinksManager linksManager, CapsManager capsManager,
                            BlockedWordsManager blockedWordsManager, WordNormalizer wordNormalizer) {
@@ -143,12 +145,11 @@ public class FilterProcessor {
             return filteredMessage.toString();
 
         } else {
-            String[] words = message.split("\\s+");
-            StringBuilder result = new StringBuilder(message.length() + 16);
-            boolean changed = false;
+            Matcher tokenMatcher = TOKEN_PATTERN.matcher(message);
+            List<Replacement> replacements = new ArrayList<>();
 
-            for (String word : words) {
-                String filteredWord = word;
+            while (tokenMatcher.find()) {
+                String word = tokenMatcher.group();
                 for (Map.Entry<Pattern, String> entry : wordsManager.getWordsMap().entrySet()) {
                     Matcher m = entry.getKey().matcher(word);
                     if (m.find()) {
@@ -156,16 +157,23 @@ public class FilterProcessor {
                         if (wordNormalizer.isSafeWord(foundWord)) break;
 
                         badWords.add(word);
-                        filteredWord = replacement.equals("*")
+                        String repl = replacement.equals("*")
                                 ? generateDynamicReplacement(word)
                                 : replacement;
-                        changed = true;
+                        replacements.add(new Replacement(tokenMatcher.start(), word.length(), repl));
                         break;
                     }
                 }
-                result.append(filteredWord).append(" ");
             }
-            return changed ? result.toString().trim() : message;
+
+            if (replacements.isEmpty()) return message;
+
+            replacements.sort(Comparator.comparingInt(r -> -r.start));
+            StringBuilder filteredMessage = new StringBuilder(message);
+            for (Replacement rep : replacements) {
+                filteredMessage.replace(rep.start, rep.start + rep.length, rep.replacement);
+            }
+            return filteredMessage.toString();
         }
     }
 

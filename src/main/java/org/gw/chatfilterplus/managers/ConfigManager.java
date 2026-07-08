@@ -7,6 +7,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.gw.chatfilterplus.ChatFilterPlus;
+import org.gw.chatfilterplus.configs.ConfigUpdater;
 import org.gw.chatfilterplus.utils.HexColors;
 import org.gw.chatfilterplus.utils.PlaceholderUtil;
 
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
 public class ConfigManager {
 
     private final ChatFilterPlus plugin;
+    private final ConfigUpdater configUpdater;
 
     private FileConfiguration mainConfig;
     private FileConfiguration badWordsConfig;
@@ -112,6 +114,7 @@ public class ConfigManager {
 
     public ConfigManager(ChatFilterPlus plugin) {
         this.plugin = plugin;
+        this.configUpdater = new ConfigUpdater(plugin);
         this.configFile = new File(plugin.getDataFolder(), "config.yml");
         this.badWordsFile = new File(plugin.getDataFolder(), "bad-words.yml");
         this.linksFile = new File(plugin.getDataFolder(), "links.yml");
@@ -269,34 +272,37 @@ public class ConfigManager {
         return Collections.unmodifiableList(result);
     }
 
+    private FileConfiguration loadWithUpdate(File file, String resourceName) {
+        if (!file.exists()) {
+            plugin.saveResource(resourceName, false);
+        } else {
+            configUpdater.update(file, resourceName);
+        }
+        return YamlConfiguration.loadConfiguration(file);
+    }
+
     private void loadMainConfig() {
-        if (!configFile.exists()) plugin.saveResource("config.yml", false);
-        mainConfig = YamlConfiguration.loadConfiguration(configFile);
+        mainConfig = loadWithUpdate(configFile, "config.yml");
     }
 
     private void loadBadWordsConfig() {
-        if (!badWordsFile.exists()) plugin.saveResource("bad-words.yml", false);
-        badWordsConfig = YamlConfiguration.loadConfiguration(badWordsFile);
+        badWordsConfig = loadWithUpdate(badWordsFile, "bad-words.yml");
     }
 
     private void loadLinksConfig() {
-        if (!linksFile.exists()) plugin.saveResource("links.yml", false);
-        linksConfig = YamlConfiguration.loadConfiguration(linksFile);
+        linksConfig = loadWithUpdate(linksFile, "links.yml");
     }
 
     private void loadCapsConfig() {
-        if (!capsFile.exists()) plugin.saveResource("caps.yml", false);
-        capsConfig = YamlConfiguration.loadConfiguration(capsFile);
+        capsConfig = loadWithUpdate(capsFile, "caps.yml");
     }
 
     private void loadBlockedWordsConfig() {
-        if (!blockedWordsFile.exists()) plugin.saveResource("blocked-words.yml", false);
-        blockedWordsConfig = YamlConfiguration.loadConfiguration(blockedWordsFile);
+        blockedWordsConfig = loadWithUpdate(blockedWordsFile, "blocked-words.yml");
     }
 
     private void loadAntiSpamConfig() {
-        if (!antiSpamFile.exists()) plugin.saveResource("anti-spam.yml", false);
-        antiSpamConfig = YamlConfiguration.loadConfiguration(antiSpamFile);
+        antiSpamConfig = loadWithUpdate(antiSpamFile, "anti-spam.yml");
     }
 
     public boolean reload() {
