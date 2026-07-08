@@ -5,7 +5,6 @@ import org.gw.chatfilterplus.ChatFilterPlus;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.regex.Pattern;
 
 @Getter
 public class CapsManager {
@@ -14,8 +13,6 @@ public class CapsManager {
     private final ConfigManager configManager;
 
     private final AtomicReference<Set<String>> whitelist = new AtomicReference<>(Set.of());
-
-    private static final Pattern NON_LETTERS = Pattern.compile("[^\\p{L}]");
 
     public CapsManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
@@ -104,7 +101,20 @@ public class CapsManager {
 
     private String cleanWord(String word, boolean ignoreNonLetters) {
         if (!ignoreNonLetters) return word;
-        return NON_LETTERS.matcher(word).replaceAll("");
+
+        int len = word.length();
+        StringBuilder clean = null;
+        for (int i = 0; i < len; i++) {
+            char c = word.charAt(i);
+            if (Character.isLetter(c)) {
+                if (clean != null) clean.append(c);
+            } else if (clean == null) {
+                clean = new StringBuilder(len);
+                clean.append(word, 0, i);
+            }
+        }
+        if (clean == null) return word;
+        return clean.toString();
     }
 
     public boolean addWhitelistWord(String word) {
@@ -122,7 +132,7 @@ public class CapsManager {
 
         try {
             configManager.getCapsConfig().save(new java.io.File(plugin.getDataFolder(), "caps.yml"));
-            loadWhitelist(); // обновляем atomic reference
+            loadWhitelist();
             plugin.log("Добавлено слово в whitelist капса: &#ffff00" + lowerWord);
             return true;
         } catch (Exception e) {

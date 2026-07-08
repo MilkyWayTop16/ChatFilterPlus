@@ -3,53 +3,43 @@ package org.gw.chatfilterplus.managers;
 import lombok.Getter;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.gw.chatfilterplus.ChatFilterPlus;
-import org.gw.chatfilterplus.utils.PatternFactory;
+import org.gw.chatfilterplus.utils.ProfanityEngine;
 
 import java.io.File;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Pattern;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Getter
 public class BlockedWordsManager {
 
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
-    private final Map<Pattern, String> blockedWordsMap = new ConcurrentHashMap<>();
+    private final AtomicReference<ProfanityEngine> engineRef =
+            new AtomicReference<>(new ProfanityEngine(List.of(), List.of(), "high", false));
+    private final AtomicReference<List<String>> wordsListRef =
+            new AtomicReference<>(List.of());
 
     public BlockedWordsManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
         this.configManager = configManager;
     }
 
+    public ProfanityEngine getEngine() {
+        return engineRef.get();
+    }
+
     public void loadBlockedWords() {
-        PatternFactory.clearCache();
-
-        String filterLevel = configManager.getBlockedWordsFilterLevel();
         List<String> words = configManager.getBlockedWordsList();
+        String level = configManager.getBlockedWordsFilterLevel();
 
-        List<String> sortedWords = new ArrayList<>(words);
-        sortedWords.sort((a, b) -> Integer.compare(b.length(), a.length()));
-
-        Map<Pattern, String> newMap = new ConcurrentHashMap<>();
-
-        for (String word : sortedWords) {
-            try {
-                Pattern pattern = PatternFactory.createPattern(word, filterLevel);
-                if (pattern != null) {
-                    newMap.put(pattern, word);
-                }
-            } catch (Exception e) {
-                plugin.console("&#FF5D00Ошибка при создании паттерна для запрещённого слова: " + word);
-            }
-        }
-
-        blockedWordsMap.clear();
-        blockedWordsMap.putAll(newMap);
+        ProfanityEngine engine = new ProfanityEngine(words, List.of(), level, false);
+        engineRef.set(engine);
+        wordsListRef.set(List.copyOf(words));
     }
 
     public List<String> getBlockedWordsList() {
-        return new ArrayList<>(blockedWordsMap.values());
+        return new ArrayList<>(wordsListRef.get());
     }
 
     public boolean addBlockedWord(String word) {
@@ -58,26 +48,21 @@ public class BlockedWordsManager {
         }
 
         String trimmed = word.trim();
-
-        if (blockedWordsMap.values().stream().anyMatch(w -> w.equalsIgnoreCase(trimmed))) {
+        List<String> current = wordsListRef.get();
+        if (current.stream().anyMatch(w -> w.equalsIgnoreCase(trimmed))) {
             return false;
         }
 
         try {
-            Pattern pattern = PatternFactory.createPattern(trimmed, configManager.getBlockedWordsFilterLevel());
-
             FileConfiguration cfg = configManager.getBlockedWordsConfig();
             List<String> list = new ArrayList<>(cfg.getStringList("blocked-words"));
             list.add(trimmed);
             cfg.set("blocked-words", list);
+            cfg.save(new File(plugin.getDataFolder(), "blocked-words.yml"));
 
-            File file = new File(plugin.getDataFolder(), "blocked-words.yml");
-            cfg.save(file);
-
-            blockedWordsMap.put(pattern, trimmed);
+            loadBlockedWords();
             plugin.log("Добавлено запрещённое слово: &#ffff00" + trimmed);
             return true;
-
         } catch (Exception e) {
             plugin.console("&#FF5D00Ошибка при добавлении запрещённого слова '" + trimmed + "': " + e.getMessage());
             return false;
@@ -90,24 +75,18 @@ public class BlockedWordsManager {
         }
 
         String trimmed = word.trim();
-
-        boolean removed = blockedWordsMap.entrySet().removeIf(entry -> entry.getValue().equalsIgnoreCase(trimmed));
-        if (!removed) {
-            return false;
-        }
-
         try {
             FileConfiguration cfg = configManager.getBlockedWordsConfig();
             List<String> list = new ArrayList<>(cfg.getStringList("blocked-words"));
-            list.removeIf(w -> w.equalsIgnoreCase(trimmed));
+            boolean removed = list.removeIf(w -> w.equalsIgnoreCase(trimmed));
+            if (!removed) return false;
+
             cfg.set("blocked-words", list);
+            cfg.save(new File(plugin.getDataFolder(), "blocked-words.yml"));
 
-            File file = new File(plugin.getDataFolder(), "blocked-words.yml");
-            cfg.save(file);
-
+            loadBlockedWords();
             plugin.log("Удалено запрещённое слово: &#ffff00" + trimmed);
             return true;
-
         } catch (Exception e) {
             plugin.console("&#FF5D00Ошибка при удалении запрещённого слова '" + trimmed + "': " + e.getMessage());
             return false;

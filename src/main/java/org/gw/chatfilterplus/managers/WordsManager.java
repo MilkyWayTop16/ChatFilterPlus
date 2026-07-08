@@ -5,13 +5,12 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.HexColors;
-import org.gw.chatfilterplus.utils.PatternFactory;
+import org.gw.chatfilterplus.utils.ProfanityEngine;
 
 import java.io.File;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.regex.Pattern;
 
 @Getter
 public class WordsManager {
@@ -19,47 +18,37 @@ public class WordsManager {
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
 
-    private final AtomicReference<Map<Pattern, String>> wordsMapRef =
-            new AtomicReference<>(new ConcurrentHashMap<>());
+    private final AtomicReference<ProfanityEngine> engineRef =
+            new AtomicReference<>(new ProfanityEngine(List.of(), List.of(), "high", true));
 
     public WordsManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
         this.configManager = configManager;
     }
 
-    public Map<Pattern, String> getWordsMap() {
-        return wordsMapRef.get();
+    public ProfanityEngine getEngine() {
+        return engineRef.get();
     }
 
     public void loadWords() {
-        PatternFactory.clearCache();
-
-        String filterLevel = configManager.getBadWordsFilterLevel();
         List<String> badWordsList = configManager.getBadWordsList();
+        List<String> safeWords = configManager.getSafeWords();
+        String level = configManager.getBadWordsFilterLevel();
+        boolean english = configManager.isBadWordsDetectEnglishLookalikes();
 
-        List<String> sortedWords = new ArrayList<>(badWordsList);
-        sortedWords.sort((a, b) -> Integer.compare(b.length(), a.length()));
+        ProfanityEngine engine = new ProfanityEngine(badWordsList, safeWords, level, english);
+        engineRef.set(engine);
 
-        Map<Pattern, String> newMap = new ConcurrentHashMap<>(sortedWords.size());
-
-        for (String word : sortedWords) {
-            try {
-                Pattern pattern = PatternFactory.createPattern(word, filterLevel);
-                if (pattern != null) {
-                    newMap.put(pattern, word);
-                }
-            } catch (Exception e) {
-                plugin.console("&#FF5D00Ошибка создания паттерна для слова: " + word);
-            }
-        }
-
-        wordsMapRef.set(newMap);
-
-        plugin.log("Загружено &#ffff00" + newMap.size() + " &fплохих слов (уровень фильтра: &#ffff00" + filterLevel + "&f)");
+        plugin.log("Загружено &#ffff00" + badWordsList.size()
+                + " &fплохих слов (уровень: &#ffff00" + level
+                + "&f, lookalikes: &#ffff00" + english + "&f)");
     }
 
     public void reloadSafeWords() {
-        plugin.getWordNormalizer().reload(configManager.getSafeWords());
+        loadWords();
+        if (plugin.getWordNormalizer() != null) {
+            plugin.getWordNormalizer().reload(configManager.getSafeWords());
+        }
     }
 
     public List<String> getBadWordsList() {

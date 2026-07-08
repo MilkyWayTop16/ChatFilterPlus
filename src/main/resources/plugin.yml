@@ -1,5 +1,5 @@
 name: ChatFilterPlus
-version: 2.1
+version: 2.2
 main: org.gw.chatfilterplus.ChatFilterPlus
 author: vkusniy_milkyway
 api-version: '1.16'
@@ -17,8 +17,13 @@ permissions:
     default: op
   chatfilterplus.bypass.chatfilter.blockedwords:
     default: op
-  chatfilterplus.bypass.chatfilter.antispam:
+  chatfilterplus.bypass.chatfilter.spam:
     default: op
+  chatfilterplus.bypass.chatfilter.antispam:
+    default: false
+    description: Legacy 2.1 alias; implies chatfilterplus.bypass.chatfilter.spam
+    children:
+      chatfilterplus.bypass.chatfilter.spam: true
   chatfilterplus.bypass.punishment.badwords:
     default: op
   chatfilterplus.bypass.punishment.links:
@@ -27,8 +32,13 @@ permissions:
     default: op
   chatfilterplus.bypass.punishment.blockedwords:
     default: op
-  chatfilterplus.bypass.punishment.antispam:
+  chatfilterplus.bypass.punishment.spam:
     default: op
+  chatfilterplus.bypass.punishment.antispam:
+    default: false
+    description: Legacy 2.1 alias; implies chatfilterplus.bypass.punishment.spam
+    children:
+      chatfilterplus.bypass.punishment.spam: true
   chatfilterplus.admin.notify:
     default: op
   chatfilterplus.reload:
@@ -45,6 +55,9 @@ permissions:
       chatfilterplus.links.whitelist.add: true
       chatfilterplus.links.whitelist.remove: true
       chatfilterplus.links.list: true
+      chatfilterplus.links.keywords.add: true
+      chatfilterplus.links.keywords.remove: true
+      chatfilterplus.links.keywords.list: true
   chatfilterplus.caps:
     default: op
     children:

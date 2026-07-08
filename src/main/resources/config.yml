@@ -6,9 +6,13 @@
 #
 #     ◆ Нашёл баг/ошибку/недочёт? Напиши мне о проблеме в Телеграмме - @vkusniy_milkyway
 #            ◆ Если плагин для тебя очень интересный, то ты всегда можешь
-#        оставить отзыв плагину, ну и подписаться на мой Тгк - @GornaSquadd
+#           оставить отзыв плагину, ну и подписаться на мой Тгк - @GornaSqd
 #                             Мне будет очень приятно :)
 #
+
+# Версия конфигурации плагина
+# (Ни в коем случае не трогать данный параметр!)
+config-version: 2.2
 
 settings:
   # Настройка логирования
@@ -187,6 +191,30 @@ actions:
         not-found:
           - "[message] &#FB8808▶ Ошибочка! &fСсылка/домен &#FB8808«{link}» &fне найден в вайлисте!"
           - "[sound] BLOCK_ANVIL_LAND"
+    keywords:
+      add:
+        success:
+          - "[message] &#FFFF00◆ &fПромо-слово &#FFFF00«{word}» &fуспешно добавлено!"
+          - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+        already-exists:
+          - "[message] &#FB8808▶ Ошибочка! &fПромо-слово &#FB8808«{word}» &fуже есть в списке!"
+          - "[sound] BLOCK_ANVIL_LAND"
+      remove:
+        success:
+          - "[message] &#FFFF00◆ &fПромо-слово &#FFFF00«{word}» &fуспешно удалено!"
+          - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+        not-found:
+          - "[message] &#FB8808▶ Ошибочка! &fПромо-слово &#FB8808«{word}» &fне найдено в списке!"
+          - "[sound] BLOCK_ANVIL_LAND"
+      list:
+        header:
+          - "[message] &#FFFF00▶ &fСписок промо-слов рекламы:"
+          - "[sound] BLOCK_LEVER_CLICK"
+        item:
+          - "[message] &f  — &#FFFF00{word}"
+        empty:
+          - "[message] &#FB8808▶ &fСписок промо-слов рекламы &#FB8808полностью &fпуст..."
+          - "[sound] BLOCK_LEVER_CLICK"
     list:
       header:
         - "[message] &#FFFF00▶ &fСписок ссылок/доменов из вайтлиста:"
@@ -275,6 +303,8 @@ actions:
     - "[message] &#FFFF00   ◆ /cfp words list <bad/safe/blocked/all> &f— Посмотреть список"
     - "[message] &r "
     - "[message] &#FFFF00   ◆ /cfp links whitelist add/remove <Ссылка/домен> &f— Управление вайтлистом ссылок и доменов"
+    - "[message] &#FFFF00   ◆ /cfp links keywords add/remove <Слово> &f— Управление ключевыми словами рекламы"
+    - "[message] &#FFFF00   ◆ /cfp links keywords list &f— Список ключевых слов рекламы"
     - "[message] &#FFFF00   ◆ /cfp links list &f— Посмотреть список вайтлиста ссылок и доменов"
     - "[message] &r "
     - "[message] &#FFFF00   ◆ /cfp caps whitelist add/remove <Слово> &f— Управление вайтлиста капса"

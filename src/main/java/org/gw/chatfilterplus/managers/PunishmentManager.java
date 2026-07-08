@@ -3,8 +3,11 @@ package org.gw.chatfilterplus.managers;
 import lombok.Getter;
 import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.gw.chatfilterplus.ChatFilterPlus;
+import org.gw.chatfilterplus.configs.ConfigUtils;
+import org.gw.chatfilterplus.utils.PermissionCompat;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -21,46 +24,52 @@ public class PunishmentManager {
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
 
-    private final File badWordsPunishmentLogFile;
-    private final File linksPunishmentLogFile;
-    private final File capsPunishmentLogFile;
-    private final File blockedWordsPunishmentLogFile;
-    private final File antiSpamPunishmentLogFile;
+    private final Map<FilterType, File> punishmentLogFiles = new EnumMap<>(FilterType.class);
+    private final Map<FilterType, Map<String, AtomicInteger>> violations = new EnumMap<>(FilterType.class);
+    private final Map<FilterType, Map<String, Map<String, Long>>> notificationCooldowns = new EnumMap<>(FilterType.class);
+    private final Map<FilterType, Set<String>> exemptPlayers = new EnumMap<>(FilterType.class);
+    private final Map<FilterType, Set<String>> exemptGroups = new EnumMap<>(FilterType.class);
+    private final Map<FilterType, String> bypassPermissions = new EnumMap<>(FilterType.class);
+    private final Map<FilterType, Boolean> punishmentsEnabled = new EnumMap<>(FilterType.class);
 
     private final ThreadLocal<SimpleDateFormat> dateFormat = ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
-
-    private final Map<String, AtomicInteger> playerBadWordsViolations = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> playerLinksViolations = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> playerCapsViolations = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> playerBlockedWordsViolations = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> playerAntiSpamViolations = new ConcurrentHashMap<>();
-
-    private final Map<String, Map<String, Long>> playerBadWordsNotificationCooldowns = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, Long>> playerLinksNotificationCooldowns = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, Long>> playerCapsNotificationCooldowns = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, Long>> playerBlockedWordsNotificationCooldowns = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, Long>> playerAntiSpamNotificationCooldowns = new ConcurrentHashMap<>();
 
     public PunishmentManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
         this.configManager = configManager;
 
-        this.badWordsPunishmentLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "badwords-punishments-logs.txt");
-        this.linksPunishmentLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "links-punishments-logs.txt");
-        this.capsPunishmentLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "caps-punishments-logs.txt");
-        this.blockedWordsPunishmentLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "blockedwords-punishments-logs.txt");
-        this.antiSpamPunishmentLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "antispam-punishments-logs.txt");
+        File logsDir = new File(plugin.getDataFolder(), "logs");
+        for (FilterType type : FilterType.values()) {
+            punishmentLogFiles.put(type, new File(logsDir, type.punishmentLogFileName()));
+            violations.put(type, new ConcurrentHashMap<>());
+            notificationCooldowns.put(type, new ConcurrentHashMap<>());
+        }
 
-        initializePunishmentLogFiles();
+        punishmentLogFiles.values().forEach(this::createLogFileIfNotExists);
+        reloadExemptCache();
         startViolationCleanupTask();
     }
 
-    private void initializePunishmentLogFiles() {
-        createLogFileIfNotExists(badWordsPunishmentLogFile);
-        createLogFileIfNotExists(linksPunishmentLogFile);
-        createLogFileIfNotExists(capsPunishmentLogFile);
-        createLogFileIfNotExists(blockedWordsPunishmentLogFile);
-        createLogFileIfNotExists(antiSpamPunishmentLogFile);
+    private void reloadExemptCache() {
+        for (FilterType type : FilterType.values()) {
+            FileConfiguration config = type.config(configManager);
+            punishmentsEnabled.put(type, config.getBoolean(type.punishmentPath("enabled"), false));
+
+            Set<String> players = new HashSet<>();
+            for (String name : config.getStringList(type.punishmentPath("exceptions.players"))) {
+                if (name != null && !name.isBlank()) players.add(name.trim());
+            }
+            exemptPlayers.put(type, players.isEmpty() ? Set.of() : Set.copyOf(players));
+
+            Set<String> groups = new HashSet<>();
+            for (String group : config.getStringList(type.punishmentPath("exceptions.groups"))) {
+                if (group != null && !group.isBlank()) groups.add(group.trim());
+            }
+            exemptGroups.put(type, groups.isEmpty() ? Set.of() : Set.copyOf(groups));
+
+            String bypass = config.getString(type.punishmentPath("bypass-permission"), "");
+            bypassPermissions.put(type, bypass == null ? "" : bypass);
+        }
     }
 
     private void createLogFileIfNotExists(File file) {
@@ -80,27 +89,16 @@ public class PunishmentManager {
 
     private void cleanOldViolations() {
         long currentTime = System.currentTimeMillis();
-        cleanAtomicMap(playerBadWordsViolations);
-        cleanAtomicMap(playerLinksViolations);
-        cleanAtomicMap(playerCapsViolations);
-        cleanAtomicMap(playerBlockedWordsViolations);
-        cleanAtomicMap(playerAntiSpamViolations);
 
-        cleanCooldowns(playerBadWordsNotificationCooldowns, currentTime);
-        cleanCooldowns(playerLinksNotificationCooldowns, currentTime);
-        cleanCooldowns(playerCapsNotificationCooldowns, currentTime);
-        cleanCooldowns(playerBlockedWordsNotificationCooldowns, currentTime);
-        cleanCooldowns(playerAntiSpamNotificationCooldowns, currentTime);
-    }
-
-    private void cleanAtomicMap(Map<String, AtomicInteger> map) {
-        map.entrySet().removeIf(entry -> Bukkit.getPlayerExact(entry.getKey()) == null);
+        for (FilterType type : FilterType.values()) {
+            violations.get(type).entrySet().removeIf(entry -> Bukkit.getPlayerExact(entry.getKey()) == null);
+            cleanCooldowns(notificationCooldowns.get(type), currentTime);
+        }
     }
 
     private void cleanCooldowns(Map<String, Map<String, Long>> cooldownsMap, long currentTime) {
         cooldownsMap.entrySet().removeIf(entry -> {
-            boolean isOffline = Bukkit.getPlayerExact(entry.getKey()) == null;
-            if (isOffline) return true;
+            if (Bukkit.getPlayerExact(entry.getKey()) == null) return true;
             entry.getValue().entrySet().removeIf(cooldown -> currentTime > cooldown.getValue());
             return entry.getValue().isEmpty();
         });
@@ -110,85 +108,40 @@ public class PunishmentManager {
         if (!isPunishmentsEnabled(type) || isPlayerExempt(player, type)) return;
 
         String playerName = player.getName();
-        AtomicInteger counter = getViolationsMap(type).computeIfAbsent(playerName, k -> new AtomicInteger(0));
-        int violations = counter.incrementAndGet();
+        int violationCount = violations.get(type)
+                .computeIfAbsent(playerName, k -> new AtomicInteger(0))
+                .incrementAndGet();
 
-        ConfigurationSection punishments = getPunishmentsSection(type);
-        if (punishments == null) return;
+        ConfigurationSection stagesSection = type.config(configManager)
+                .getConfigurationSection(type.punishmentPath("stages"));
+        if (stagesSection == null) return;
 
-        String stage = String.valueOf(violations);
-        ConfigurationSection stagesSection = punishments.getConfigurationSection("stages");
-        List<String> actions = (stagesSection != null) ? stagesSection.getStringList(stage + ".actions") : Collections.emptyList();
-        List<String> notificationCooldowns = (stagesSection != null) ? stagesSection.getStringList(stage + ".notification-cooldowns") : Collections.emptyList();
+        String stage = String.valueOf(violationCount);
+        List<String> actions = stagesSection.getStringList(stage + ".actions");
+        List<String> cooldowns = stagesSection.getStringList(stage + ".notification-cooldowns");
 
         if (!actions.isEmpty()) {
-            List<String> parsedCommands = parsePunishmentActions(actions, player, items);
-            if (!parsedCommands.isEmpty()) {
-                executeCommands(player, parsedCommands);
-                logPunishment(playerName, items, violations, stage, parsedCommands, type);
+            List<String> commands = parsePunishmentActions(actions, player, items);
+            if (!commands.isEmpty()) {
+                executeCommands(player, commands);
+                logPunishment(playerName, items, violationCount, stage, type);
             }
         }
-        updateNotificationCooldowns(playerName, notificationCooldowns, type);
-    }
-
-    private Map<String, AtomicInteger> getViolationsMap(FilterType type) {
-        return switch (type) {
-            case BAD_WORDS -> playerBadWordsViolations;
-            case LINKS -> playerLinksViolations;
-            case CAPS -> playerCapsViolations;
-            case BLOCKED_WORDS -> playerBlockedWordsViolations;
-            case ANTI_SPAM -> playerAntiSpamViolations;
-        };
-    }
-
-    private ConfigurationSection getPunishmentsSection(FilterType type) {
-        return switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getConfigurationSection("punishments.bad-words");
-            case LINKS -> configManager.getLinksConfig().getConfigurationSection("punishments.links");
-            case CAPS -> configManager.getCapsConfig().getConfigurationSection("punishments.caps");
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getConfigurationSection("punishments.blocked-words");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getConfigurationSection("punishments.anti-spam");
-        };
+        updateNotificationCooldowns(playerName, cooldowns, type);
     }
 
     private boolean isPunishmentsEnabled(FilterType type) {
-        return switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getBoolean("punishments.bad-words.enabled", false);
-            case LINKS -> configManager.getLinksConfig().getBoolean("punishments.links.enabled", false);
-            case CAPS -> configManager.getCapsConfig().getBoolean("punishments.caps.enabled", false);
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getBoolean("punishments.blocked-words.enabled", false);
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getBoolean("punishments.anti-spam.enabled", false);
-        };
+        return Boolean.TRUE.equals(punishmentsEnabled.get(type));
     }
 
     private boolean isPlayerExempt(Player player, FilterType type) {
-        List<String> exceptionPlayers = switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getStringList("punishments.bad-words.exceptions.players");
-            case LINKS -> configManager.getLinksConfig().getStringList("punishments.links.exceptions.players");
-            case CAPS -> configManager.getCapsConfig().getStringList("punishments.caps.exceptions.players");
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getStringList("punishments.blocked-words.exceptions.players");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getStringList("punishments.anti-spam.exceptions.players");
-        };
+        if (exemptPlayers.getOrDefault(type, Set.of()).contains(player.getName())) return true;
 
-        List<String> exceptionGroups = switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getStringList("punishments.bad-words.exceptions.groups");
-            case LINKS -> configManager.getLinksConfig().getStringList("punishments.links.exceptions.groups");
-            case CAPS -> configManager.getCapsConfig().getStringList("punishments.caps.exceptions.groups");
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getStringList("punishments.blocked-words.exceptions.groups");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getStringList("punishments.anti-spam.exceptions.groups");
-        };
+        String bypassPermission = bypassPermissions.getOrDefault(type, "");
+        if (!bypassPermission.isEmpty() && PermissionCompat.hasPermission(player, bypassPermission)) return true;
+        if (type == FilterType.ANTI_SPAM && player.hasPermission(PermissionCompat.PUNISH_ANTISPAM)) return true;
 
-        String bypassPermission = switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getString("punishments.bad-words.bypass-permission");
-            case LINKS -> configManager.getLinksConfig().getString("punishments.links.bypass-permission");
-            case CAPS -> configManager.getCapsConfig().getString("punishments.caps.bypass-permission");
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getString("punishments.blocked-words.bypass-permission");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("punishments.anti-spam.bypass-permission");
-        };
-
-        if (exceptionPlayers.contains(player.getName()) || player.hasPermission(bypassPermission)) return true;
-
-        for (String group : exceptionGroups) {
+        for (String group : exemptGroups.getOrDefault(type, Set.of())) {
             if (player.hasPermission("group." + group)) return true;
         }
         return false;
@@ -234,19 +187,23 @@ public class PunishmentManager {
         return result;
     }
 
-    private void logPunishment(String playerName, List<String> items, int violations, String stage, List<String> commands, FilterType type) {
-        if (!isPunishmentLoggingEnabled(type)) return;
+    private void logPunishment(String playerName, List<String> items, int violationCount, String stage, FilterType type) {
+        FileConfiguration config = type.config(configManager);
+        if (!config.getBoolean(type.punishmentPath("logs.enabled"), true)) return;
 
-        String message = getLogTemplate(type)
+        String template = config.getString(type.punishmentPath("logs.message"), type.getDefaultPunishmentLogTemplate());
+        String joined = String.join(", ", items);
+
+        String message = template
                 .replace("{player}", playerName)
                 .replace("{time}", dateFormat.get().format(new Date()))
-                .replace("{violations}", String.valueOf(violations))
+                .replace("{violations}", String.valueOf(violationCount))
                 .replace("{stage}", stage)
-                .replace("{words}", String.join(", ", items))
-                .replace("{links}", String.join(", ", items))
-                .replace("{original-message", items.isEmpty() ? "[CAPS]" : String.join(", ", items));
+                .replace("{words}", joined)
+                .replace("{links}", joined)
+                .replace("{original-message}", items.isEmpty() ? "[CAPS]" : joined);
 
-        File logFile = getPunishmentLogFile(type);
+        File logFile = punishmentLogFiles.get(type);
 
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try (BufferedWriter writer = new BufferedWriter(new FileWriter(logFile, true))) {
@@ -258,94 +215,27 @@ public class PunishmentManager {
         });
     }
 
-    private boolean isPunishmentLoggingEnabled(FilterType type) {
-        return switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getBoolean("punishments.bad-words.logs.enabled", true);
-            case LINKS -> configManager.getLinksConfig().getBoolean("punishments.links.logs.enabled", true);
-            case CAPS -> configManager.getCapsConfig().getBoolean("punishments.caps.logs.enabled", true);
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getBoolean("punishments.blocked-words.logs.enabled", true);
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getBoolean("punishments.anti-spam.logs.enabled", true);
-        };
-    }
+    private void updateNotificationCooldowns(String playerName, List<String> cooldowns, FilterType type) {
+        if (cooldowns.isEmpty()) return;
 
-    private String getLogTemplate(FilterType type) {
-        return switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getString("punishments.bad-words.logs.message");
-            case LINKS -> configManager.getLinksConfig().getString("punishments.links.logs.message");
-            case CAPS -> configManager.getCapsConfig().getString("punishments.caps.logs.message", "[{time}] Игрок {player} (нарушений: {violations}, стадия: {stage}) использовал капс");
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getString("punishments.blocked-words.logs.message", "[{time}] Игрок {player} (нарушений: {violations}, стадия: {stage}) использовал запрещённое слово(а): {words}");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("punishments.anti-spam.logs.message", "[{time}] Игрок {player} (нарушений: {violations}, стадия: {stage}) был пойман на спаме");
-        };
-    }
-
-    private File getPunishmentLogFile(FilterType type) {
-        return switch (type) {
-            case BAD_WORDS -> badWordsPunishmentLogFile;
-            case LINKS -> linksPunishmentLogFile;
-            case CAPS -> capsPunishmentLogFile;
-            case BLOCKED_WORDS -> blockedWordsPunishmentLogFile;
-            case ANTI_SPAM -> antiSpamPunishmentLogFile;
-        };
-    }
-
-    private void updateNotificationCooldowns(String playerName, List<String> notificationCooldowns, FilterType type) {
-        Map<String, Map<String, Long>> cooldownsMap = switch (type) {
-            case BAD_WORDS -> playerBadWordsNotificationCooldowns;
-            case LINKS -> playerLinksNotificationCooldowns;
-            case CAPS -> playerCapsNotificationCooldowns;
-            case BLOCKED_WORDS -> playerBlockedWordsNotificationCooldowns;
-            case ANTI_SPAM -> playerAntiSpamNotificationCooldowns;
-        };
-
-        Map<String, Long> playerCooldowns = cooldownsMap.computeIfAbsent(playerName, k -> new ConcurrentHashMap<>());
+        Map<String, Long> playerCooldowns = notificationCooldowns.get(type)
+                .computeIfAbsent(playerName, k -> new ConcurrentHashMap<>());
         long currentTime = System.currentTimeMillis();
 
-        for (String cooldown : notificationCooldowns) {
+        for (String cooldown : cooldowns) {
             String[] parts = cooldown.split(":", 2);
             if (parts.length != 2) continue;
 
-            String notificationType = parts[0].trim();
-            long durationMillis = parseDuration(parts[1].trim());
+            long durationMillis = ConfigUtils.parseDuration(parts[1].trim());
             if (durationMillis > 0) {
-                playerCooldowns.put(notificationType, currentTime + durationMillis);
+                playerCooldowns.put(parts[0].trim(), currentTime + durationMillis);
             }
         }
-    }
-
-    private long parseDuration(String durationStr) {
-        if (durationStr == null || durationStr.isEmpty()) return 0;
-
-        long duration = 0;
-        StringBuilder number = new StringBuilder();
-        for (char c : durationStr.toLowerCase().toCharArray()) {
-            if (Character.isDigit(c)) {
-                number.append(c);
-            } else if (number.length() > 0) {
-                try {
-                    long value = Long.parseLong(number.toString());
-                    switch (c) {
-                        case 's' -> duration += value * 1000L;
-                        case 'm' -> duration += value * 60 * 1000L;
-                        case 'h' -> duration += value * 60 * 60 * 1000L;
-                        case 'd' -> duration += value * 24 * 60 * 60 * 1000L;
-                    }
-                } catch (NumberFormatException ignored) {}
-                number = new StringBuilder();
-            }
-        }
-        return duration;
     }
 
     public void reload() {
-        playerBadWordsViolations.clear();
-        playerLinksViolations.clear();
-        playerCapsViolations.clear();
-        playerBlockedWordsViolations.clear();
-        playerAntiSpamViolations.clear();
-        playerBadWordsNotificationCooldowns.clear();
-        playerLinksNotificationCooldowns.clear();
-        playerCapsNotificationCooldowns.clear();
-        playerBlockedWordsNotificationCooldowns.clear();
-        playerAntiSpamNotificationCooldowns.clear();
+        violations.values().forEach(Map::clear);
+        notificationCooldowns.values().forEach(Map::clear);
+        reloadExemptCache();
     }
 }

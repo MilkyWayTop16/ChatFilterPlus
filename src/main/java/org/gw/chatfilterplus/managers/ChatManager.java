@@ -3,21 +3,24 @@ package org.gw.chatfilterplus.managers;
 import lombok.Getter;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.AntiSpamResult;
+import org.gw.chatfilterplus.utils.PermissionCompat;
 
-import java.io.File;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 @Getter
 public class ChatManager implements Listener {
+
+    private static final long DECISION_TTL_MILLIS = 3_000L;
+    private static final long NOTIFICATION_DELAY_TICKS = 1L;
 
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
@@ -31,12 +34,59 @@ public class ChatManager implements Listener {
     private final BlockedWordsManager blockedWordsManager;
     private final AntiSpamManager antiSpamManager;
 
-    private final File badWordsLogFile;
-    private final File linksLogFile;
+    private final Map<UUID, PendingChatDecision> pendingChatDecisions = new ConcurrentHashMap<>();
+    private final Map<UUID, PendingCommandDecision> pendingCommandDecisions = new ConcurrentHashMap<>();
 
     private final ThreadLocal<DateTimeFormatter> dateFormatter = ThreadLocal.withInitial(
             () -> DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     );
+
+    private static final class PendingChatDecision {
+        final String originalMessage;
+        final String finalMessage;
+        final boolean blocked;
+        final boolean modified;
+        final long createdAt;
+
+        PendingChatDecision(String originalMessage, String finalMessage, boolean blocked, boolean modified) {
+            this.originalMessage = originalMessage;
+            this.finalMessage = finalMessage;
+            this.blocked = blocked;
+            this.modified = modified;
+            this.createdAt = System.currentTimeMillis();
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() - createdAt > DECISION_TTL_MILLIS;
+        }
+
+        boolean matches(String current) {
+            return originalMessage.equals(current) || finalMessage.equals(current);
+        }
+    }
+
+    private static final class PendingCommandDecision {
+        final String commandLabel;
+        final String originalArgs;
+        final String finalFullMessage;
+        final boolean blocked;
+        final boolean modified;
+        final long createdAt;
+
+        PendingCommandDecision(String commandLabel, String originalArgs, String finalFullMessage,
+                               boolean blocked, boolean modified) {
+            this.commandLabel = commandLabel;
+            this.originalArgs = originalArgs;
+            this.finalFullMessage = finalFullMessage;
+            this.blocked = blocked;
+            this.modified = modified;
+            this.createdAt = System.currentTimeMillis();
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() - createdAt > DECISION_TTL_MILLIS;
+        }
+    }
 
     public ChatManager(ChatFilterPlus plugin, ConfigManager configManager, WordsManager wordsManager,
                        LinksManager linksManager, CapsManager capsManager,
@@ -56,23 +106,6 @@ public class ChatManager implements Listener {
         this.punishmentManager = punishmentManager;
         this.cacheManager = cacheManager;
         this.antiSpamManager = antiSpamManager;
-
-        this.badWordsLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "badwords-logs.txt");
-        this.linksLogFile = new File(plugin.getDataFolder() + File.separator + "logs", "links-logs.txt");
-
-        initializeLogFiles();
-    }
-
-    private void initializeLogFiles() {
-        try {
-            File logsDir = badWordsLogFile.getParentFile();
-            if (!logsDir.exists()) logsDir.mkdirs();
-
-            if (!badWordsLogFile.exists()) badWordsLogFile.createNewFile();
-            if (!linksLogFile.exists()) linksLogFile.createNewFile();
-        } catch (Exception e) {
-            plugin.console("&#FF5D00Не удалось создать файлы логов...");
-        }
     }
 
     public void clearCache() {
@@ -81,16 +114,136 @@ public class ChatManager implements Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
-    public void onPlayerChat(AsyncPlayerChatEvent event) {
-        handleMessage(event.getPlayer(), event.getMessage(),
-                event::setMessage,
-                event::setCancelled);
+    public void onPlayerChat(AsyncPlayerChatEvent event, boolean readOnly) {
+        if (!configManager.isCompatibilityAggressiveMode() && event.isCancelled()) {
+            return;
+        }
+
+        Player player = event.getPlayer();
+        String originalMessage = event.getMessage();
+        final boolean[] modified = {false};
+        final boolean[] blocked = {false};
+        final String[] finalMessage = {originalMessage};
+
+        handleMessage(player, originalMessage,
+                message -> {
+                    if (!readOnly) {
+                        event.setMessage(message);
+                        finalMessage[0] = message;
+                        modified[0] = true;
+                    }
+                },
+                cancel -> {
+                    if (!readOnly && cancel) {
+                        applyChatBlock(event);
+                        blocked[0] = true;
+                    }
+                });
+
+        if (!readOnly) {
+            if (configManager.isCompatibilityAggressiveMode() && modified[0] && !blocked[0]) {
+                event.setCancelled(false);
+            }
+            pendingChatDecisions.put(player.getUniqueId(),
+                    new PendingChatDecision(originalMessage, finalMessage[0], blocked[0], modified[0]));
+        }
+    }
+
+    public void enforcePlayerChat(AsyncPlayerChatEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        PendingChatDecision decision = pendingChatDecisions.get(uuid);
+        if (decision == null || decision.isExpired()) {
+            if (decision != null) pendingChatDecisions.remove(uuid, decision);
+            return;
+        }
+
+        if (!decision.matches(event.getMessage()) && !decision.originalMessage.equals(event.getMessage())) {
+            return;
+        }
+
+        if (decision.blocked) {
+            applyChatBlock(event);
+            return;
+        }
+
+        if (decision.modified) {
+            event.setMessage(decision.finalMessage);
+            if (configManager.isCompatibilityAggressiveMode() && event.isCancelled()) {
+                event.setCancelled(false);
+            }
+        }
+    }
+
+    private void applyChatBlock(AsyncPlayerChatEvent event) {
+        event.setCancelled(true);
+        try {
+            event.getRecipients().clear();
+        } catch (UnsupportedOperationException | ConcurrentModificationException ignored) {
+            try {
+                Set<Player> recipients = event.getRecipients();
+                Iterator<Player> iterator = recipients.iterator();
+                while (iterator.hasNext()) {
+                    iterator.next();
+                    iterator.remove();
+                }
+            } catch (Exception ignored2) {
+            }
+        }
+    }
+
+    public void handleCommandMessage(Player player, String commandLabel, String originalMessage,
+                                     Consumer<String> setFinalMessage,
+                                     Runnable cancelCommand) {
+        final boolean[] blocked = {false};
+        final boolean[] modified = {false};
+        final String[] finalArgs = {originalMessage};
+
+        handleMessage(player, originalMessage,
+                message -> {
+                    setFinalMessage.accept(message);
+                    finalArgs[0] = message;
+                    modified[0] = true;
+                },
+                cancel -> {
+                    if (cancel) {
+                        if (cancelCommand != null) cancelCommand.run();
+                        blocked[0] = true;
+                    }
+                });
+
+        String full = "/" + commandLabel + (finalArgs[0].isEmpty() ? "" : " " + finalArgs[0]);
+        pendingCommandDecisions.put(player.getUniqueId(),
+                new PendingCommandDecision(commandLabel, originalMessage, full, blocked[0], modified[0]));
     }
 
     public void handleCommandMessage(Player player, String originalMessage,
-                                     Consumer<String> setFinalMessage) {
-        handleMessage(player, originalMessage, setFinalMessage, null);
+                                     Consumer<String> setFinalMessage,
+                                     Runnable cancelCommand) {
+        handleCommandMessage(player, "", originalMessage, setFinalMessage, cancelCommand);
+    }
+
+    public void enforceCommand(PlayerCommandPreprocessEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        PendingCommandDecision decision = pendingCommandDecisions.get(uuid);
+        if (decision == null || decision.isExpired()) {
+            if (decision != null) pendingCommandDecisions.remove(uuid, decision);
+            return;
+        }
+
+        String current = event.getMessage();
+        if (decision.blocked) {
+            event.setCancelled(true);
+            return;
+        }
+
+        if (decision.modified && decision.finalFullMessage != null && !decision.finalFullMessage.isEmpty()) {
+            String withoutSlash = current.startsWith("/") ? current.substring(1) : current;
+            int space = withoutSlash.indexOf(' ');
+            String label = space == -1 ? withoutSlash : withoutSlash.substring(0, space);
+            if (decision.commandLabel.isEmpty() || decision.commandLabel.equalsIgnoreCase(label)) {
+                event.setMessage(decision.finalFullMessage);
+            }
+        }
     }
 
     private void handleMessage(Player player, String originalMessage,
@@ -99,22 +252,17 @@ public class ChatManager implements Listener {
 
         if (player == null) return;
 
-        boolean bypassBadWords = isPlayerBypassingFilter("badwords", player);
-        boolean bypassLinks = isPlayerBypassingFilter("links", player);
-        boolean bypassCaps = isPlayerBypassingFilter("caps", player);
-        boolean bypassBlockedWords = isPlayerBypassingFilter("blockedwords", player);
-        boolean bypassAntiSpam = isPlayerBypassingFilter("antispam", player);
+        Set<FilterType> bypassed = collectBypassedFilters(player);
 
-        if (bypassBadWords && bypassLinks && bypassCaps && bypassBlockedWords && bypassAntiSpam) {
+        if (bypassed.size() == FilterType.values().length) {
             if (setFinalMessage != null) setFinalMessage.accept(originalMessage);
             return;
         }
 
-        if (!bypassAntiSpam) {
+        if (!bypassed.contains(FilterType.ANTI_SPAM)) {
             AntiSpamResult spamResult = antiSpamManager.checkSpam(player, originalMessage);
             if (spamResult != null) {
-                Bukkit.getScheduler().runTask(plugin, () ->
-                        sendAntiSpamNotification(player, spamResult, originalMessage));
+                scheduleAfterChat(() -> sendAntiSpamNotification(player, spamResult, originalMessage));
 
                 if (!"character-flood-first".equals(spamResult.reason)) {
                     if (cancelEvent != null) cancelEvent.accept(true);
@@ -123,238 +271,220 @@ public class ChatManager implements Listener {
             }
         }
 
-        // ← ИСПРАВЛЕНО: теперь 5 параметров
         MessageCacheManager.CachedMessage cached = cacheManager.analyzeAndCacheMessage(
-                originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
+                originalMessage,
+                player.getUniqueId(),
+                bypassed.contains(FilterType.BAD_WORDS),
+                bypassed.contains(FilterType.LINKS),
+                bypassed.contains(FilterType.BLOCKED_WORDS),
+                bypassed.contains(FilterType.CAPS));
 
-        String finalMessage = determineFinalMessage(cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords);
-
-        boolean shouldBlock = shouldBlockMessage(cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords);
-
-        if (shouldBlock) {
+        if (shouldBlockMessage(cached, bypassed)) {
             if (cancelEvent != null) cancelEvent.accept(true);
-        } else if (setFinalMessage != null && !finalMessage.equals(originalMessage)) {
-            setFinalMessage.accept(finalMessage);
+        } else {
+            String finalMessage = determineFinalMessage(cached, bypassed);
+            if (setFinalMessage != null && !finalMessage.equals(originalMessage)) {
+                setFinalMessage.accept(finalMessage);
+            }
         }
 
-        if (!cached.getBlockedWords().isEmpty() || !cached.getBadWords().isEmpty() ||
-                cached.isCaps() || !cached.getLinks().isEmpty()) {
-            Bukkit.getScheduler().runTask(plugin, () ->
-                    sendAllNotifications(player, cached, bypassBadWords, bypassLinks, bypassCaps, bypassBlockedWords, originalMessage));
+        if (hasAnyTrigger(cached)) {
+            scheduleAfterChat(() -> sendAllNotifications(player, cached, bypassed, originalMessage));
         }
     }
 
-    private String determineFinalMessage(MessageCacheManager.CachedMessage cached,
-                                         boolean bypassBadWords, boolean bypassLinks,
-                                         boolean bypassCaps, boolean bypassBlockedWords) {
+    private boolean hasAnyTrigger(MessageCacheManager.CachedMessage cached) {
+        for (FilterType type : FilterType.PRIORITY_ORDER) {
+            if (isTriggered(cached, type)) return true;
+        }
+        return false;
+    }
 
+    private void scheduleAfterChat(Runnable task) {
+        Bukkit.getScheduler().runTaskLater(plugin, task, NOTIFICATION_DELAY_TICKS);
+    }
+
+    private boolean isTriggered(MessageCacheManager.CachedMessage cached, FilterType type) {
+        return switch (type) {
+            case BAD_WORDS -> !cached.getBadWords().isEmpty();
+            case LINKS -> !cached.getLinks().isEmpty();
+            case CAPS -> cached.isCaps();
+            case BLOCKED_WORDS -> !cached.getBlockedWords().isEmpty();
+            case ANTI_SPAM -> false;
+        };
+    }
+
+    private boolean isActive(MessageCacheManager.CachedMessage cached, FilterType type, Set<FilterType> bypassed) {
+        return isTriggered(cached, type) && configManager.isFilterEnabled(type) && !bypassed.contains(type);
+    }
+
+    private List<String> detectedItems(MessageCacheManager.CachedMessage cached, FilterType type, String originalMessage) {
+        return switch (type) {
+            case BAD_WORDS -> uniqueItems(cached.getBadWords());
+            case LINKS -> uniqueItems(cached.getLinks());
+            case BLOCKED_WORDS -> uniqueItems(cached.getBlockedWords());
+            case CAPS -> List.of(originalMessage);
+            case ANTI_SPAM -> List.of(originalMessage);
+        };
+    }
+
+    private String determineFinalMessage(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
         String message = cached.getFilteredMessage();
 
-        if (cached.isCaps() && configManager.isCapsFilterEnabled() && !bypassCaps) {
-            if (shouldApplyCapsFix(cached, bypassBadWords, bypassBlockedWords)) {
-                message = capsManager.fixCaps(message);
-            }
+        if (isActive(cached, FilterType.CAPS, bypassed) && shouldApplyCapsFix(cached, bypassed)) {
+            message = capsManager.fixCaps(message);
         }
         return message;
     }
 
-    private boolean shouldApplyCapsFix(MessageCacheManager.CachedMessage cached,
-                                       boolean bypassBadWords, boolean bypassBlockedWords) {
-        if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
-            return !"blockedwords".equalsIgnoreCase(configManager.getCapsFilterPriorityBlockedwords());
+    private boolean shouldApplyCapsFix(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
+        return capsYieldsTo(cached, bypassed,
+                configManager.getCapsFilterPriorityBlockedwords(),
+                configManager.getCapsFilterPriorityBadwords());
+    }
+
+    private boolean shouldSendCapsPlayerNotification(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
+        return capsYieldsTo(cached, bypassed,
+                configManager.getCapsNotificationPriorityBlockedwords(),
+                configManager.getCapsNotificationPriorityBadwords());
+    }
+
+    private boolean capsYieldsTo(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed,
+                                 String blockedWordsPriority, String badWordsPriority) {
+        if (isActive(cached, FilterType.BLOCKED_WORDS, bypassed)) {
+            return !"blockedwords".equalsIgnoreCase(blockedWordsPriority);
         }
-        if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
-            return !"badwords".equalsIgnoreCase(configManager.getCapsFilterPriorityBadwords());
+        if (isActive(cached, FilterType.BAD_WORDS, bypassed)) {
+            return !"badwords".equalsIgnoreCase(badWordsPriority);
         }
         return true;
     }
 
-    private boolean shouldBlockMessage(MessageCacheManager.CachedMessage cached,
-                                       boolean bypassBadWords, boolean bypassLinks,
-                                       boolean bypassCaps, boolean bypassBlockedWords) {
-
-        if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
-            return "block-and-notify".equalsIgnoreCase(configManager.getBlockedWordsFilterMode());
-        }
-        if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
-            return "block-and-notify".equalsIgnoreCase(configManager.getBadWordsFilterMode());
-        }
-        if (!cached.getLinks().isEmpty() && configManager.isLinksFilterEnabled() && !bypassLinks) {
-            return "block-and-notify".equalsIgnoreCase(configManager.getLinksFilterMode());
-        }
-        if (cached.isCaps() && configManager.isCapsFilterEnabled() && !bypassCaps) {
-            return "block-and-notify".equalsIgnoreCase(configManager.getCapsFilterMode());
+    private boolean shouldBlockMessage(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
+        for (FilterType type : FilterType.PRIORITY_ORDER) {
+            if (isActive(cached, type, bypassed)) {
+                return "block-and-notify".equalsIgnoreCase(configManager.getFilterMode(type));
+            }
         }
         return false;
     }
 
     private void sendAllNotifications(Player player, MessageCacheManager.CachedMessage cached,
-                                      boolean bypassBadWords, boolean bypassLinks,
-                                      boolean bypassCaps, boolean bypassBlockedWords, String originalMessage) {
+                                      Set<FilterType> bypassed, String originalMessage) {
 
         if (player == null || !player.isOnline()) return;
 
-        if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
-            sendFilterNotification(FilterType.BLOCKED_WORDS, player, cached.getBlockedWords(), originalMessage);
-        }
-        if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
-            sendFilterNotification(FilterType.BAD_WORDS, player, cached.getBadWords(), originalMessage);
-        }
-        if (cached.isCaps() && configManager.isCapsFilterEnabled() && !bypassCaps) {
-            sendFilterNotification(FilterType.CAPS, player, List.of(originalMessage), originalMessage);
-            if (shouldSendCapsPlayerNotification(cached, bypassBadWords, bypassBlockedWords)) {
+        FilterType punishmentType = null;
+        List<String> punishmentItems = null;
+
+        for (FilterType type : FilterType.PRIORITY_ORDER) {
+            if (!isActive(cached, type, bypassed)) continue;
+
+            List<String> items = detectedItems(cached, type, originalMessage);
+            sendFilterNotification(type, player, items, originalMessage);
+
+            if (type == FilterType.CAPS && shouldSendCapsPlayerNotification(cached, bypassed)) {
                 notificationManager.notifyPlayer(player, FilterType.CAPS, "[CAPS]");
             }
+
+            if (punishmentType == null) {
+                punishmentType = type;
+                punishmentItems = items;
+            }
         }
-        if (!cached.getLinks().isEmpty() && configManager.isLinksFilterEnabled() && !bypassLinks) {
-            sendFilterNotification(FilterType.LINKS, player, cached.getLinks(), originalMessage);
+
+        if (punishmentType != null) {
+            punishmentManager.handlePunishment(player, punishmentType, punishmentItems);
         }
+    }
+
+    private Set<FilterType> collectBypassedFilters(Player player) {
+        Set<FilterType> bypassed = EnumSet.noneOf(FilterType.class);
+        for (FilterType type : FilterType.values()) {
+            if (!configManager.isFilterEnabled(type) || isPlayerBypassingFilter(player, type)) {
+                bypassed.add(type);
+            }
+        }
+        return bypassed;
+    }
+
+    private boolean isPlayerBypassingFilter(Player player, FilterType type) {
+        if (PermissionCompat.hasChatFilterBypass(player, type)) return true;
+        if (configManager.getExceptionPlayers(type).contains(player.getName())) return true;
+
+        for (String group : configManager.getExceptionGroups(type)) {
+            if (player.hasPermission("group." + group)) return true;
+        }
+        return false;
+    }
+
+    private List<String> uniqueItems(List<String> items) {
+        if (items.size() <= 1) return items;
+        return new ArrayList<>(new LinkedHashSet<>(items));
     }
 
     private void sendFilterNotification(FilterType type, Player player, List<String> items, String originalMessage) {
         if (player == null || !player.isOnline()) return;
 
-        List<String> uniqueItems = items.size() > 1
-                ? new ArrayList<>(new LinkedHashSet<>(items))
-                : items;
+        plugin.log(type.getConsoleLabel() + " от &#ffff00" + player.getName() + " &f→ &#ffff00" + String.join(", ", items));
+        logToFile(player.getName(), items, type);
 
-        plugin.log(getLogMessage(type, player.getName(), uniqueItems, originalMessage));
-        logToFile(player.getName(), uniqueItems, type);
-
-        notificationManager.notifyAdmins(player, type, uniqueItems);
-        notificationManager.notifyConsole(player, type, uniqueItems);
-        notificationManager.notifyDiscord(player, type, uniqueItems);
-        punishmentManager.handlePunishment(player, type, uniqueItems);
+        notificationManager.notifyAdmins(player, type, items);
+        notificationManager.notifyConsole(player, type, items);
+        notificationManager.notifyDiscord(player, type, items);
 
         if (type != FilterType.CAPS) {
-            notificationManager.notifyPlayer(player, type, uniqueItems.isEmpty() ? "" : uniqueItems.get(0));
+            notificationManager.notifyPlayer(player, type, items.isEmpty() ? "" : items.get(0));
         }
     }
 
     private void sendAntiSpamNotification(Player player, AntiSpamResult result, String originalMessage) {
         if (player == null || !player.isOnline()) return;
 
-        plugin.log("Обнаружен спам от &#ffff00" + player.getName() + " &f→ &#ffff00" + originalMessage);
-
         List<String> items = List.of(originalMessage);
-        logToFile(player.getName(), items, FilterType.ANTI_SPAM);
 
-        Map<String, String> placeholders = Map.of("remaining", String.valueOf(result.remainingSeconds));
+        plugin.log(FilterType.ANTI_SPAM.getConsoleLabel() + " от &#ffff00" + player.getName() + " &f→ &#ffff00" + originalMessage);
+        logToFile(player.getName(), items, FilterType.ANTI_SPAM);
 
         notificationManager.notifyAdmins(player, FilterType.ANTI_SPAM, items);
         notificationManager.notifyConsole(player, FilterType.ANTI_SPAM, items);
         notificationManager.notifyDiscord(player, FilterType.ANTI_SPAM, items);
 
         String subPath = switch (result.reason) {
-            case "general-cooldown" -> "general-cooldown";
             case "similar-message-cooldown" -> "similar-message-cooldown";
             case "character-flood", "character-flood-first" -> "character-flood";
             default -> "general-cooldown";
         };
 
+        Map<String, String> placeholders = Map.of("remaining", String.valueOf(result.remainingSeconds));
         configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
         punishmentManager.handlePunishment(player, FilterType.ANTI_SPAM, items);
     }
 
-    private String getLogMessage(FilterType type, String playerName, List<String> items, String originalMessage) {
-        return switch (type) {
-            case BAD_WORDS -> "Обнаружен мат от &#ffff00" + playerName + " &f→ &#ffff00" + String.join(", ", items);
-            case LINKS -> "Обнаружена ссылка от &#ffff00" + playerName + " &f→ &#ffff00" + String.join(", ", items);
-            case CAPS -> "Обнаружен капс от &#ffff00" + playerName + " &f→ &#ffff00" + originalMessage;
-            case BLOCKED_WORDS -> "Обнаружено запрещённое слово от &#ffff00" + playerName + " &f→ &#ffff00" + String.join(", ", items);
-            case ANTI_SPAM -> "Обнаружен спам от &#ffff00" + playerName + " &f→ &#ffff00" + originalMessage;
-        };
-    }
-
-    private boolean shouldSendCapsPlayerNotification(MessageCacheManager.CachedMessage cached,
-                                                     boolean bypassBadWords, boolean bypassBlockedWords) {
-        if (!cached.getBlockedWords().isEmpty() && configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
-            return !"blockedwords".equalsIgnoreCase(configManager.getCapsNotificationPriorityBlockedwords());
-        }
-        if (!cached.getBadWords().isEmpty() && configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
-            return !"badwords".equalsIgnoreCase(configManager.getCapsNotificationPriorityBadwords());
-        }
-        return true;
-    }
-
     private void logToFile(String playerName, List<String> items, FilterType type) {
         if (items.isEmpty()) return;
-
-        String message = buildLogMessage(playerName, items, type);
-
-        switch (type) {
-            case BAD_WORDS -> logCleanupManager.appendAndCleanBadWordsLog(message);
-            case LINKS -> logCleanupManager.appendAndCleanLinksLog(message);
-            case CAPS -> logCleanupManager.appendAndCleanCapsLog(message);
-            case BLOCKED_WORDS -> logCleanupManager.appendAndCleanBlockedWordsLog(message);
-            case ANTI_SPAM -> logCleanupManager.appendAndCleanAntiSpamLog(message);
-        }
+        logCleanupManager.appendLog(type, buildLogMessage(playerName, items, type));
     }
 
     private String buildLogMessage(String playerName, List<String> items, FilterType type) {
-        String template = switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getString("logs.file.bad-words.message");
-            case LINKS -> configManager.getLinksConfig().getString("logs.file.links.message");
-            case CAPS -> configManager.getCapsConfig().getString("logs.file.caps.message", "[{time}] Игрок {player} использовал капс: {original-message}");
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getString("logs.file.blocked-words.message", "[{time}] Игрок {player} использовал запрещённое слово: {words}");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("logs.file.anti-spam.message", "[{time}] Игрок {player} спамил сообщениями: {reason}");
-        };
+        String template = type.config(configManager)
+                .getString(type.logPath("message"), type.getDefaultLogTemplate());
 
-        String linksFormatted = type == FilterType.LINKS
-                ? linksManager.getFormattedLinks(items)
-                : String.join(", ", items);
-
-        String time = dateFormatter.get().format(LocalDateTime.now());
+        String joined = String.join(", ", items);
+        String linksFormatted = type == FilterType.LINKS ? linksManager.getFormattedLinks(items) : joined;
 
         return template
                 .replace("{player}", playerName)
-                .replace("{time}", time)
-                .replace("{words}", String.join(", ", items))
+                .replace("{time}", dateFormatter.get().format(LocalDateTime.now()))
+                .replace("{words}", joined)
                 .replace("{links}", linksFormatted)
-                .replace("{original-message}", items.isEmpty() ? "" : String.join(", ", items))
-                .replace("{reason}", items.isEmpty() ? "" : items.get(0));
-    }
-
-    private boolean isPlayerBypassingFilter(String filterName, Player player) {
-        String perm = "chatfilterplus.bypass.chatfilter." + filterName;
-        if (player.hasPermission(perm)) return true;
-
-        List<String> exceptionPlayers;
-        List<String> exceptionGroups;
-
-        switch (filterName) {
-            case "badwords" -> {
-                exceptionPlayers = configManager.getBadWordsExceptionPlayers();
-                exceptionGroups = configManager.getBadWordsExceptionGroups();
-            }
-            case "links" -> {
-                exceptionPlayers = configManager.getLinksExceptionPlayers();
-                exceptionGroups = configManager.getLinksExceptionGroups();
-            }
-            case "caps" -> {
-                exceptionPlayers = configManager.getCapsExceptionPlayers();
-                exceptionGroups = configManager.getCapsExceptionGroups();
-            }
-            case "blockedwords" -> {
-                exceptionPlayers = configManager.getBlockedWordsExceptionPlayers();
-                exceptionGroups = configManager.getBlockedWordsExceptionGroups();
-            }
-            case "antispam" -> {
-                exceptionPlayers = configManager.getAntiSpamExceptionPlayers();
-                exceptionGroups = configManager.getAntiSpamExceptionGroups();
-            }
-            default -> { return false; }
-        }
-
-        if (exceptionPlayers.contains(player.getName())) return true;
-
-        for (String group : exceptionGroups) {
-            if (player.hasPermission("group." + group)) return true;
-        }
-        return false;
+                .replace("{original-message}", joined)
+                .replace("{reason}", items.get(0));
     }
 
     public void reload() {
         clearCache();
+        pendingChatDecisions.clear();
+        pendingCommandDecisions.clear();
     }
 }

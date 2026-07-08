@@ -6,7 +6,6 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.managers.ChatManager;
-import org.gw.chatfilterplus.utils.AntiSpamResult;
 
 import java.util.HashSet;
 import java.util.Locale;
@@ -21,7 +20,11 @@ public class CommandFilterListener implements Listener {
     public CommandFilterListener(ChatFilterPlus plugin, ChatManager chatManager) {
         this.plugin = plugin;
         this.chatManager = chatManager;
+        reload();
+    }
 
+    public void reload() {
+        filteredCommands.clear();
         for (String cmd : plugin.getConfigManager().getCommandFilteringCommands()) {
             filteredCommands.add(cmd.toLowerCase(Locale.ROOT));
         }
@@ -43,8 +46,18 @@ public class CommandFilterListener implements Listener {
 
         String commandMessage = withoutSlash.substring(spaceIndex + 1);
 
-        chatManager.handleCommandMessage(event.getPlayer(), commandMessage, filteredMessage -> {
-            event.setMessage("/" + command + " " + filteredMessage);
-        });
+        chatManager.handleCommandMessage(
+                event.getPlayer(),
+                command,
+                commandMessage,
+                filteredMessage -> event.setMessage("/" + command + " " + filteredMessage),
+                () -> event.setCancelled(true)
+        );
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onCommandPreprocessEnforce(PlayerCommandPreprocessEvent event) {
+        if (!plugin.getConfigManager().isCommandFilteringEnabled()) return;
+        chatManager.enforceCommand(event);
     }
 }

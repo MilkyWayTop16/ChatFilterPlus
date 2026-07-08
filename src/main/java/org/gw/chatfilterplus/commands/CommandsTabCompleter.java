@@ -5,18 +5,23 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.gw.chatfilterplus.managers.LinksManager;
 import org.gw.chatfilterplus.managers.WordsManager;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import java.util.stream.Collectors;
 
 public class CommandsTabCompleter implements TabCompleter {
 
     private final WordsManager wordsManager;
+    private final LinksManager linksManager;
 
-    public CommandsTabCompleter(WordsManager wordsManager) {
+    public CommandsTabCompleter(WordsManager wordsManager, LinksManager linksManager) {
         this.wordsManager = wordsManager;
+        this.linksManager = linksManager;
     }
 
     @Override
@@ -59,10 +64,22 @@ public class CommandsTabCompleter implements TabCompleter {
             }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("links")) {
             if (sender.hasPermission("chatfilterplus.links")) {
-                completions.addAll(Arrays.asList("whitelist", "list"));
+                completions.addAll(Arrays.asList("whitelist", "keywords", "list"));
             }
         } else if (args.length == 3 && args[0].equalsIgnoreCase("links") && args[1].equalsIgnoreCase("whitelist")) {
             completions.addAll(Arrays.asList("add", "remove"));
+        } else if (args.length == 3 && args[0].equalsIgnoreCase("links") && args[1].equalsIgnoreCase("keywords")) {
+            if (sender.hasPermission("chatfilterplus.links")) {
+                completions.addAll(Arrays.asList("add", "remove", "list"));
+            }
+        } else if (args.length >= 4 && args[0].equalsIgnoreCase("links")
+                && args[1].equalsIgnoreCase("keywords") && args[2].equalsIgnoreCase("remove")) {
+            if (sender.hasPermission("chatfilterplus.links")) {
+                String prefix = String.join(" ", Arrays.copyOfRange(args, 3, args.length)).toLowerCase(Locale.ROOT);
+                completions.addAll(linksManager.getPromoKeywords().stream()
+                        .filter(k -> k.toLowerCase(Locale.ROOT).startsWith(prefix) || k.toLowerCase(Locale.ROOT).contains(prefix))
+                        .collect(Collectors.toList()));
+            }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("caps")) {
             if (sender.hasPermission("chatfilterplus.caps")) {
                 completions.addAll(Arrays.asList("whitelist", "list"));

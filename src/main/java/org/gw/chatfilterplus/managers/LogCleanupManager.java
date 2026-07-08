@@ -1,29 +1,27 @@
 package org.gw.chatfilterplus.managers;
 
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.gw.chatfilterplus.ChatFilterPlus;
+import org.gw.chatfilterplus.configs.ConfigUtils;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.text.SimpleDateFormat;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 public class LogCleanupManager {
 
+    private static final long DEFAULT_RETENTION_MILLIS = 7 * 24 * 60 * 60 * 1000L;
+    private static final long DEFAULT_MAX_LINES = 10000L;
+
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
 
-    private final File badWordsLogFile;
-    private final File linksLogFile;
-    private final File capsLogFile;
-    private final File blockedWordsLogFile;
-    private final File antiSpamLogFile;
+    private final Map<FilterType, File> logFiles = new EnumMap<>(FilterType.class);
 
     private final ThreadLocal<SimpleDateFormat> dateFormat = ThreadLocal.withInitial(() -> {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
@@ -39,11 +37,9 @@ public class LogCleanupManager {
         this.configManager = configManager;
 
         File logsDir = new File(plugin.getDataFolder(), "logs");
-        this.badWordsLogFile = new File(logsDir, "badwords-logs.txt");
-        this.linksLogFile = new File(logsDir, "links-logs.txt");
-        this.capsLogFile = new File(logsDir, "caps-logs.txt");
-        this.blockedWordsLogFile = new File(logsDir, "blockedwords-logs.txt");
-        this.antiSpamLogFile = new File(logsDir, "antispam-logs.txt");
+        for (FilterType type : FilterType.values()) {
+            logFiles.put(type, new File(logsDir, type.logFileName()));
+        }
     }
 
     public synchronized void startLogCleanupTask() {
@@ -53,11 +49,9 @@ public class LogCleanupManager {
             @Override
             public void run() {
                 executor.submit(() -> {
-                    cleanup(badWordsLogFile, configManager.getBadWordsConfig(), "bad-words");
-                    cleanup(linksLogFile, configManager.getLinksConfig(), "links");
-                    cleanup(capsLogFile, configManager.getCapsConfig(), "caps");
-                    cleanup(blockedWordsLogFile, configManager.getBlockedWordsConfig(), "blocked-words");
-                    cleanup(antiSpamLogFile, configManager.getAntiSpamConfig(), "anti-spam");
+                    for (FilterType type : FilterType.values()) {
+                        cleanup(type);
+                    }
                 });
             }
         };
@@ -72,27 +66,8 @@ public class LogCleanupManager {
         }
     }
 
-    public void appendAndCleanBadWordsLog(String entry) {
-        appendLogAsync(badWordsLogFile, entry);
-    }
-
-    public void appendAndCleanLinksLog(String entry) {
-        appendLogAsync(linksLogFile, entry);
-    }
-
-    public void appendAndCleanCapsLog(String entry) {
-        appendLogAsync(capsLogFile, entry);
-    }
-
-    public void appendAndCleanBlockedWordsLog(String entry) {
-        appendLogAsync(blockedWordsLogFile, entry);
-    }
-
-    public void appendAndCleanAntiSpamLog(String entry) {
-        appendLogAsync(antiSpamLogFile, entry);
-    }
-
-    private void appendLogAsync(File file, String entry) {
+    public void appendLog(FilterType type, String entry) {
+        File file = logFiles.get(type);
         executor.submit(() -> {
             try {
                 ensureParentDirectory(file);
@@ -103,21 +78,29 @@ public class LogCleanupManager {
         });
     }
 
-    private void cleanup(File file, org.bukkit.configuration.ConfigurationSection cfg, String section) {
-        if (!cfg.getBoolean("logs.file." + section + ".cleanup.enabled", true)) return;
+    private void cleanup(FilterType type) {
+        FileConfiguration cfg = type.config(configManager);
+        if (!cfg.getBoolean(type.logPath("cleanup.enabled"), true)) return;
 
-        String mode = cfg.getString("logs.file." + section + ".cleanup.mode", "remove-oldest");
+        File file = logFiles.get(type);
+        String mode = cfg.getString(type.logPath("cleanup.mode"), "remove-oldest");
 
         try {
-            if ("truncate".equals(mode)) {
-                long max = cfg.getLong("logs.file." + section + ".cleanup.max-lines", 10000);
-                if (countLines(file) >= max) truncateFile(file);
-            } else if ("keep-latest".equals(mode)) {
-                long max = cfg.getLong("logs.file." + section + ".cleanup.max-lines", 10000);
-                keepLatestLines(file, max);
-            } else if ("remove-oldest".equals(mode)) {
-                long retention = cfg.getLong("logs.file." + section + ".cleanup.retention-period", 7 * 24 * 60 * 60 * 1000L);
-                removeOldestLines(file, retention);
+            switch (mode) {
+                case "truncate" -> {
+                    long max = cfg.getLong(type.logPath("cleanup.max-lines"), DEFAULT_MAX_LINES);
+                    if (countLines(file) >= max) truncateFile(file);
+                }
+                case "keep-latest" -> {
+                    long max = cfg.getLong(type.logPath("cleanup.max-lines"), DEFAULT_MAX_LINES);
+                    keepLatestLines(file, max);
+                }
+                case "remove-oldest" -> {
+                    long retention = ConfigUtils.parseRetentionPeriod(
+                            cfg.getString(type.logPath("cleanup.retention-period")), DEFAULT_RETENTION_MILLIS);
+                    removeOldestLines(file, retention);
+                }
+                default -> plugin.console("&#FF5D00Неизвестный режим очистки логов: " + mode);
             }
         } catch (IOException e) {
             plugin.console("Не удалось очистить " + file.getName() + ": " + e.getMessage());

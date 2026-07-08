@@ -5,8 +5,6 @@ import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.WordNormalizer;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
 
 @Getter
 public class MessageCacheManager {
@@ -14,12 +12,10 @@ public class MessageCacheManager {
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
     private final FilterProcessor filterProcessor;
-    private final Map<String, CachedMessage> messageCache;
-    private final ConcurrentLinkedDeque<String> accessOrder;
     private final int cacheSize;
     private final long cacheTTL;
-    private final BlockedWordsManager blockedWordsManager;
-    private final WordNormalizer wordNormalizer;
+
+    private final Map<String, CachedMessage> messageCache;
 
     public static class CachedMessage {
         private final String filteredMessage;
@@ -27,17 +23,15 @@ public class MessageCacheManager {
         private final List<String> links;
         private final List<String> blockedWords;
         private final boolean isCaps;
-        private final String capsFixedMessage;
         private final long timestamp;
 
         public CachedMessage(String filteredMessage, List<String> badWords, List<String> links,
-                             List<String> blockedWords, boolean isCaps, String capsFixedMessage, long timestamp) {
+                             List<String> blockedWords, boolean isCaps, long timestamp) {
             this.filteredMessage = filteredMessage;
             this.badWords = badWords;
             this.links = links;
             this.blockedWords = blockedWords;
             this.isCaps = isCaps;
-            this.capsFixedMessage = capsFixedMessage;
             this.timestamp = timestamp;
         }
 
@@ -46,7 +40,6 @@ public class MessageCacheManager {
         public List<String> getLinks() { return links; }
         public List<String> getBlockedWords() { return blockedWords; }
         public boolean isCaps() { return isCaps; }
-        public String getCapsFixedMessage() { return capsFixedMessage; }
         public long getTimestamp() { return timestamp; }
     }
 
@@ -57,85 +50,127 @@ public class MessageCacheManager {
 
         this.plugin = plugin;
         this.configManager = configManager;
-        this.blockedWordsManager = blockedWordsManager;
-        this.wordNormalizer = wordNormalizer;
         this.filterProcessor = new FilterProcessor(plugin, configManager, wordsManager, linksManager, capsManager, blockedWordsManager, wordNormalizer);
         this.cacheSize = Math.max(cacheSize, 0);
         this.cacheTTL = configManager.getCacheCleanupRetentionMillis();
-        this.messageCache = new ConcurrentHashMap<>(Math.max(this.cacheSize, 128));
-        this.accessOrder = new ConcurrentLinkedDeque<>();
+        this.messageCache = createCache(this.cacheSize);
 
         if (this.cacheSize > 0) {
             plugin.getServer().getScheduler().runTaskTimerAsynchronously(plugin, this::cleanCache, 20L * 60, 20L * 60);
         }
     }
 
+    private Map<String, CachedMessage> createCache(int maxSize) {
+        if (maxSize <= 0) return Collections.emptyMap();
+
+        int initialCapacity = Math.min(maxSize, 128) + 1;
+        return Collections.synchronizedMap(new LinkedHashMap<>(initialCapacity, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, CachedMessage> eldest) {
+                return size() > maxSize;
+            }
+        });
+    }
+
     private void cleanCache() {
         if (cacheSize <= 0) return;
 
         long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, CachedMessage>> it = messageCache.entrySet().iterator();
-
-        while (it.hasNext()) {
-            Map.Entry<String, CachedMessage> entry = it.next();
-            if (now - entry.getValue().getTimestamp() > cacheTTL) {
-                it.remove();
-                accessOrder.remove(entry.getKey());
-            }
+        synchronized (messageCache) {
+            messageCache.entrySet().removeIf(entry -> now - entry.getValue().getTimestamp() > cacheTTL);
         }
     }
 
     public CachedMessage analyzeAndCacheMessage(String originalMessage,
+                                                java.util.UUID playerId,
                                                 boolean bypassBadWords,
                                                 boolean bypassLinks,
                                                 boolean bypassBlockedWords,
                                                 boolean bypassCaps) {
 
-        if (cacheSize <= 0) {
-            return filterProcessor.processMessage(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
-        }
-
-        String cacheKey = originalMessage + "|" + bypassBadWords + "|" + bypassLinks + "|" + bypassBlockedWords + "|" + bypassCaps;
-
-        CachedMessage cached = messageCache.get(cacheKey);
-        if (cached != null) {
-            if (System.currentTimeMillis() - cached.getTimestamp() < cacheTTL) {
-                moveToRecent(cacheKey);
-                return cached;
-            } else {
-                messageCache.remove(cacheKey);
-                accessOrder.remove(cacheKey);
+        AdaptiveAdFilter adaptive = null;
+        int suspicion = 0;
+        if (playerId != null && !bypassLinks && plugin.getLinksManager() != null) {
+            adaptive = plugin.getLinksManager().getAdaptiveAdFilter();
+            if (adaptive != null) {
+                suspicion = adaptive.getSuspicionLevel(playerId);
             }
         }
 
-        CachedMessage result = filterProcessor.processMessage(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
-
-        if (!result.getBadWords().isEmpty() || !result.getLinks().isEmpty() || !result.getBlockedWords().isEmpty()) {
-            evictIfNeeded();
-            messageCache.put(cacheKey, result);
-            accessOrder.addLast(cacheKey);
+        if (cacheSize <= 0 || suspicion > 0) {
+            return filterProcessor.processMessage(originalMessage, playerId, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
         }
 
+        String cacheKey = buildCacheKey(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
+
+        CachedMessage cached = messageCache.get(cacheKey);
+        if (cached != null && System.currentTimeMillis() - cached.getTimestamp() < cacheTTL) {
+            return applyAdaptiveOnCacheHit(cached, originalMessage, playerId, bypassLinks, adaptive);
+        }
+
+        CachedMessage result = filterProcessor.processMessage(originalMessage, playerId, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
+        if (result.getLinks().isEmpty()) {
+            messageCache.put(cacheKey, result);
+        }
         return result;
     }
 
-    private void moveToRecent(String key) {
-        accessOrder.remove(key);
-        accessOrder.addLast(key);
+    private CachedMessage applyAdaptiveOnCacheHit(CachedMessage cached,
+                                                  String originalMessage,
+                                                  java.util.UUID playerId,
+                                                  boolean bypassLinks,
+                                                  AdaptiveAdFilter adaptive) {
+        if (bypassLinks || playerId == null || adaptive == null || !adaptive.isEnabled()) {
+            return cached;
+        }
+
+        List<AdaptiveAdFilter.AdHit> hits = adaptive.evaluate(playerId, originalMessage, List.of());
+        if (hits.isEmpty()) {
+            return cached;
+        }
+
+        List<String> linkItems = new ArrayList<>(hits.size());
+        for (AdaptiveAdFilter.AdHit hit : hits) {
+            linkItems.add(hit.text());
+        }
+
+        String filtered = cached.getFilteredMessage();
+        if (configManager.isLinksFilterEnabled() && plugin.getLinksManager() != null) {
+            String replacement = plugin.getLinksManager().getTranslatedReplacement();
+            hits.sort(Comparator.comparingInt(AdaptiveAdFilter.AdHit::start).reversed());
+            StringBuilder sb = new StringBuilder(originalMessage);
+            for (AdaptiveAdFilter.AdHit hit : hits) {
+                if (hit.start() >= 0 && hit.end() <= sb.length() && hit.start() < hit.end()) {
+                    sb.replace(hit.start(), hit.end(), replacement);
+                }
+            }
+            filtered = sb.toString();
+        }
+
+        return new CachedMessage(
+                filtered,
+                cached.getBadWords(),
+                linkItems,
+                cached.getBlockedWords(),
+                cached.isCaps(),
+                System.currentTimeMillis()
+        );
     }
 
-    private void evictIfNeeded() {
-        while (messageCache.size() >= cacheSize && !accessOrder.isEmpty()) {
-            String oldest = accessOrder.pollFirst();
-            if (oldest != null) {
-                messageCache.remove(oldest);
-            }
-        }
+    private static String buildCacheKey(String message,
+                                        boolean bypassBadWords,
+                                        boolean bypassLinks,
+                                        boolean bypassBlockedWords,
+                                        boolean bypassCaps) {
+        return message + '|'
+                + (bypassBadWords ? '1' : '0')
+                + (bypassLinks ? '1' : '0')
+                + (bypassBlockedWords ? '1' : '0')
+                + (bypassCaps ? '1' : '0');
     }
 
     public void clearCache() {
         messageCache.clear();
-        accessOrder.clear();
     }
 
     public void reload() {

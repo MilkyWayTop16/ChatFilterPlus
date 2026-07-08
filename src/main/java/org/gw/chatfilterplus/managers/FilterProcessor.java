@@ -2,12 +2,11 @@ package org.gw.chatfilterplus.managers;
 
 import lombok.Getter;
 import org.gw.chatfilterplus.ChatFilterPlus;
-import org.gw.chatfilterplus.utils.HexColors;
-import org.gw.chatfilterplus.utils.WordNormalizer;
+import org.gw.chatfilterplus.utils.ProfanityEngine;
 
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 @Getter
 public class FilterProcessor {
@@ -18,18 +17,17 @@ public class FilterProcessor {
     private final LinksManager linksManager;
     private final CapsManager capsManager;
     private final BlockedWordsManager blockedWordsManager;
-    private final WordNormalizer wordNormalizer;
 
     public FilterProcessor(ChatFilterPlus plugin, ConfigManager configManager, WordsManager wordsManager,
                            LinksManager linksManager, CapsManager capsManager,
-                           BlockedWordsManager blockedWordsManager, WordNormalizer wordNormalizer) {
+                           BlockedWordsManager blockedWordsManager,
+                           org.gw.chatfilterplus.utils.WordNormalizer wordNormalizer) {
         this.plugin = plugin;
         this.configManager = configManager;
         this.wordsManager = wordsManager;
         this.linksManager = linksManager;
         this.capsManager = capsManager;
         this.blockedWordsManager = blockedWordsManager;
-        this.wordNormalizer = wordNormalizer;
     }
 
     public MessageCacheManager.CachedMessage processMessage(String originalMessage,
@@ -37,170 +35,153 @@ public class FilterProcessor {
                                                             boolean bypassLinks,
                                                             boolean bypassBlockedWords,
                                                             boolean bypassCaps) {
+        return processMessage(originalMessage, null, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
+    }
+
+    public MessageCacheManager.CachedMessage processMessage(String originalMessage,
+                                                            java.util.UUID playerId,
+                                                            boolean bypassBadWords,
+                                                            boolean bypassLinks,
+                                                            boolean bypassBlockedWords,
+                                                            boolean bypassCaps) {
 
         String filteredMessage = originalMessage;
 
-        List<String> badWords = null;
-        List<String> links = null;
-        List<String> blockedWords = null;
+        List<String> badWords = Collections.emptyList();
+        List<String> links = Collections.emptyList();
+        List<String> blockedWords = Collections.emptyList();
 
         if (configManager.isBlockedWordsFilterEnabled() && !bypassBlockedWords) {
-            blockedWords = new ArrayList<>();
-            filteredMessage = applyWordFilter(filteredMessage, blockedWordsManager.getBlockedWordsMap(),
-                    blockedWords, configManager.getBlockedWordsFilterReplacement());
+            EngineResult blockedResult = applyEngineFilter(
+                    filteredMessage,
+                    blockedWordsManager.getEngine(),
+                    configManager.getBlockedWordsFilterReplacement(),
+                    false
+            );
+            filteredMessage = blockedResult.message();
+            blockedWords = blockedResult.foundWords();
         }
 
         if (configManager.isBadWordsFilterEnabled() && !bypassBadWords) {
-            badWords = new ArrayList<>();
-            filteredMessage = filterBadWords(filteredMessage, badWords);
+            EngineResult badResult = applyEngineFilter(
+                    filteredMessage,
+                    wordsManager.getEngine(),
+                    configManager.getBadWordsFilterReplacement(),
+                    true
+            );
+            filteredMessage = badResult.message();
+            badWords = badResult.foundWords();
         }
 
         if (configManager.isLinksFilterEnabled() && !bypassLinks) {
-            links = new ArrayList<>();
-            filteredMessage = filterLinks(filteredMessage, links);
+            LinkResult linkResult = filterLinks(filteredMessage, playerId);
+            filteredMessage = linkResult.message();
+            links = linkResult.links();
         }
 
-        boolean isCaps = false;
-        String capsFixedMessage = null;
-        if (configManager.isCapsFilterEnabled() && !bypassCaps) {
-            isCaps = capsManager.isCaps(originalMessage);
-            if (isCaps) {
-                capsFixedMessage = capsManager.fixCaps(originalMessage);
-            }
-        }
+        boolean isCaps = configManager.isCapsFilterEnabled() && !bypassCaps && capsManager.isCaps(originalMessage);
 
         return new MessageCacheManager.CachedMessage(
                 filteredMessage,
-                badWords != null ? badWords : Collections.emptyList(),
-                links != null ? links : Collections.emptyList(),
-                blockedWords != null ? blockedWords : Collections.emptyList(),
+                badWords,
+                links,
+                blockedWords,
                 isCaps,
-                capsFixedMessage,
                 System.currentTimeMillis()
         );
     }
 
-    private String applyWordFilter(String message, Map<Pattern, String> patternMap,
-                                   List<String> foundWords, String replacement) {
-        if (patternMap.isEmpty() || message.length() < 2) return message;
+    private record EngineResult(String message, List<String> foundWords) {
+    }
 
-        List<Replacement> replacements = new ArrayList<>();
+    private record LinkResult(String message, List<String> links) {
+    }
 
-        for (Map.Entry<Pattern, String> entry : patternMap.entrySet()) {
-            Matcher matcher = entry.getKey().matcher(message);
-            while (matcher.find()) {
-                String matched = matcher.group();
-                foundWords.add(matched);
-
-                String repl = replacement.equals("*") ? "*".repeat(matched.length()) : replacement;
-                replacements.add(new Replacement(matcher.start(), matched.length(), repl));
-            }
+    private EngineResult applyEngineFilter(String message,
+                                           ProfanityEngine engine,
+                                           String replacement,
+                                           boolean dynamicStars) {
+        if (engine == null || engine.isEmpty() || message.length() < 2) {
+            return new EngineResult(message, Collections.emptyList());
         }
 
-        if (replacements.isEmpty()) return message;
+        List<ProfanityEngine.Match> matches = engine.findMatches(message);
+        if (matches.isEmpty()) {
+            return new EngineResult(message, Collections.emptyList());
+        }
 
-        replacements.sort(Comparator.comparingInt(r -> -r.start));
+        List<String> foundWords = new ArrayList<>(matches.size());
         StringBuilder result = new StringBuilder(message);
-        for (Replacement rep : replacements) {
-            result.replace(rep.start, rep.start + rep.length, rep.replacement);
-        }
-        return result.toString();
-    }
+        boolean logReasons = configManager.isConsoleLogsEnabled();
 
-    private String filterBadWords(String message, List<String> badWords) {
-        if (message.length() < 3) return message;
-
-        String replacement = configManager.getBadWordsFilterReplacement();
-        String level = configManager.getBadWordsFilterLevel();
-
-        if (!"low".equalsIgnoreCase(level)) {
-            List<Replacement> replacements = new ArrayList<>();
-
-            for (Map.Entry<Pattern, String> entry : wordsManager.getWordsMap().entrySet()) {
-                Matcher matcher = entry.getKey().matcher(message);
-                while (matcher.find()) {
-                    String foundWord = matcher.group(1);
-                    if (wordNormalizer.isSafeWord(foundWord)) continue;
-
-                    String matchedText = matcher.group(0);
-                    badWords.add(matchedText);
-
-                    String repl = replacement.equals("*")
-                            ? generateDynamicReplacement(matchedText)
-                            : replacement;
-
-                    replacements.add(new Replacement(matcher.start(), matchedText.length(), repl));
-                }
+        for (int i = matches.size() - 1; i >= 0; i--) {
+            ProfanityEngine.Match match = matches.get(i);
+            foundWords.add(match.matchedText());
+            if (logReasons) {
+                plugin.log("Мат match=&#ffff00" + match.matchedText()
+                        + " &fdict=&#ffff00" + match.dictionaryWord()
+                        + " &fconf=&#ffff00" + match.confidence()
+                        + " &freason=&#ffff00" + match.reason());
             }
-
-            if (replacements.isEmpty()) return message;
-
-            replacements.sort(Comparator.comparingInt(r -> -r.start));
-            StringBuilder filteredMessage = new StringBuilder(message);
-            for (Replacement rep : replacements) {
-                filteredMessage.replace(rep.start, rep.start + rep.length, rep.replacement);
-            }
-            return filteredMessage.toString();
-
-        } else {
-            String[] words = message.split("\\s+");
-            StringBuilder result = new StringBuilder(message.length() + 16);
-            boolean changed = false;
-
-            for (String word : words) {
-                String filteredWord = word;
-                for (Map.Entry<Pattern, String> entry : wordsManager.getWordsMap().entrySet()) {
-                    Matcher m = entry.getKey().matcher(word);
-                    if (m.find()) {
-                        String foundWord = m.group(1);
-                        if (wordNormalizer.isSafeWord(foundWord)) break;
-
-                        badWords.add(word);
-                        filteredWord = replacement.equals("*")
-                                ? generateDynamicReplacement(word)
-                                : replacement;
-                        changed = true;
-                        break;
-                    }
-                }
-                result.append(filteredWord).append(" ");
-            }
-            return changed ? result.toString().trim() : message;
-        }
-    }
-
-    private String filterLinks(String message, List<String> links) {
-        if (message.length() < 5) return message;
-
-        Matcher linkMatcher = linksManager.getLinkPattern().matcher(message);
-        StringBuilder sb = new StringBuilder();
-        boolean found = false;
-
-        while (linkMatcher.find()) {
-            String link = linkMatcher.group();
-            if (!linksManager.isLinkAllowed(link)) {
-                links.add(link);
-                found = true;
-                String replacement = HexColors.translate(configManager.getLinksFilterReplacement());
-                linkMatcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+            String repl;
+            if ("*".equals(replacement)) {
+                repl = dynamicStars
+                        ? generateDynamicReplacement(match.matchedText())
+                        : "*".repeat(Math.max(1, match.end() - match.start()));
             } else {
-                linkMatcher.appendReplacement(sb, Matcher.quoteReplacement(link));
+                repl = replacement;
             }
+            result.replace(match.start(), match.end(), repl);
         }
 
-        if (!found) return message;
-        linkMatcher.appendTail(sb);
-        return sb.toString();
+        if (foundWords.size() > 1) {
+            Collections.reverse(foundWords);
+        }
+        return new EngineResult(result.toString(), foundWords);
+    }
+
+    private LinkResult filterLinks(String message, java.util.UUID playerId) {
+        if (message.length() < 3) {
+            return new LinkResult(message, Collections.emptyList());
+        }
+
+        List<LinksManager.LinkMatch> matches = linksManager.findBlockedLinks(message, playerId);
+        if (matches.isEmpty()) {
+            return new LinkResult(message, Collections.emptyList());
+        }
+
+        List<String> links = new ArrayList<>(matches.size());
+        StringBuilder result = new StringBuilder(message);
+        String replacement = linksManager.getTranslatedReplacement();
+
+        for (int i = matches.size() - 1; i >= 0; i--) {
+            LinksManager.LinkMatch match = matches.get(i);
+            links.add(match.text());
+            result.replace(match.start(), match.end(), replacement);
+        }
+
+        if (links.size() > 1) {
+            Collections.reverse(links);
+        }
+        return new LinkResult(result.toString(), links);
     }
 
     private String generateDynamicReplacement(String word) {
         if (word == null || word.length() < 2) return word;
-        String letterPart = word.replaceAll("[^\\p{L}]", "");
-        if (letterPart.length() < 2) return word;
 
-        int starsCount = letterPart.length() - 2;
-        return letterPart.charAt(0) + "*".repeat(Math.max(0, starsCount)) + letterPart.charAt(letterPart.length() - 1);
+        int first = -1;
+        int last = -1;
+        int letterCount = 0;
+        for (int i = 0; i < word.length(); i++) {
+            if (Character.isLetter(word.charAt(i))) {
+                if (first < 0) first = i;
+                last = i;
+                letterCount++;
+            }
+        }
+        if (letterCount < 2) return word;
+
+        int starsCount = letterCount - 2;
+        return word.charAt(first) + "*".repeat(Math.max(0, starsCount)) + word.charAt(last);
     }
-
-    private record Replacement(int start, int length, String replacement) {}
 }

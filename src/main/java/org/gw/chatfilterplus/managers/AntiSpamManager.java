@@ -9,6 +9,7 @@ import org.gw.chatfilterplus.utils.WordNormalizer;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.regex.Pattern;
 
 public class AntiSpamManager {
 
@@ -16,6 +17,17 @@ public class AntiSpamManager {
     private static final long CLEANUP_INTERVAL_TICKS = 6000L;
     private static final long ENTRY_LIFETIME_MILLIS = 600_000L;
     private static final int MAX_LEVENSHTEIN_LENGTH_DIFF = 6;
+
+    private static final int SHORT_MESSAGE_LENGTH = 8;
+    private static final double SHORT_MESSAGE_JACCARD = 0.85;
+    private static final int SHORT_MESSAGE_MAX_DISTANCE = 2;
+    private static final int LONG_MESSAGE_MAX_DISTANCE = 4;
+
+    private static final int MIN_FLOOD_PATTERN_LENGTH = 2;
+    private static final int MAX_FLOOD_PATTERN_LENGTH = 4;
+
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^\\p{L}\\p{N}]");
 
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
@@ -31,32 +43,30 @@ public class AntiSpamManager {
     public AntiSpamResult checkSpam(Player player, String message) {
         if (!configManager.isAntiSpamEnabled()) return null;
 
-        UUID uuid = player.getUniqueId();
         long now = System.currentTimeMillis();
-
-        Deque<RecentMessage> history = playerHistory.computeIfAbsent(uuid, k -> new ConcurrentLinkedDeque<>());
 
         AntiSpamResult floodResult = checkCharacterFlood(player, message, now);
         if (floodResult != null) return floodResult;
 
-        AntiSpamResult result = checkSimilarMessage(history, message, now);
+        Deque<RecentMessage> history = playerHistory.computeIfAbsent(player.getUniqueId(), k -> new ConcurrentLinkedDeque<>());
+        RecentMessage current = new RecentMessage(now, message);
+
+        AntiSpamResult result = checkSimilarMessage(history, current, message.length(), now);
         if (result != null) return result;
 
         result = checkGeneralCooldown(history, message, now);
         if (result != null) return result;
 
-        addToHistory(history, message, now);
+        addToHistory(history, current);
         return null;
     }
 
     private AntiSpamResult checkGeneralCooldown(Deque<RecentMessage> history, String message, long now) {
         if (!configManager.isGeneralCooldownEnabled() || history.isEmpty()) return null;
 
-        int minLength = configManager.getGeneralCooldownMinLength();
-        if (minLength > 0 && message.length() < minLength) return null;
-
-        int ignoreLength = configManager.getGeneralCooldownIgnoreIfLongerThan();
-        if (ignoreLength > 0 && message.length() > ignoreLength) return null;
+        if (!isLengthInRange(message.length(),
+                configManager.getGeneralCooldownMinLength(),
+                configManager.getGeneralCooldownIgnoreIfLongerThan())) return null;
 
         RecentMessage last = history.peekLast();
         if (last == null) return null;
@@ -68,73 +78,62 @@ public class AntiSpamManager {
         return null;
     }
 
-    private AntiSpamResult checkSimilarMessage(Deque<RecentMessage> history, String message, long now) {
+    private AntiSpamResult checkSimilarMessage(Deque<RecentMessage> history, RecentMessage current,
+                                               int rawLength, long now) {
         if (!configManager.isSimilarMessageCooldownEnabled()) return null;
 
-        int minLength = configManager.getSimilarMessageCooldownMinLength();
-        if (minLength > 0 && message.length() < minLength) return null;
+        if (!isLengthInRange(rawLength,
+                configManager.getSimilarMessageCooldownMinLength(),
+                configManager.getSimilarMessageCooldownIgnoreIfLongerThan())) return null;
 
-        int ignoreLength = configManager.getSimilarMessageCooldownIgnoreIfLongerThan();
-        if (ignoreLength > 0 && message.length() > ignoreLength) return null;
+        for (RecentMessage previous : history) {
+            if (!isSimilar(current, previous)) continue;
 
-        String normalized = WordNormalizer.normalize(message, "low");
-
-        for (RecentMessage prev : history) {
-            if (isSimilar(normalized, prev.normalized)) {
-                long remaining = configManager.getSimilarMessageCooldownSeconds() * 1000L - (now - prev.timestamp);
-                if (remaining > 0) {
-                    return new AntiSpamResult("similar-message-cooldown", (int) Math.ceil(remaining / 1000.0));
-                }
+            long remaining = configManager.getSimilarMessageCooldownSeconds() * 1000L - (now - previous.timestamp);
+            if (remaining > 0) {
+                return new AntiSpamResult("similar-message-cooldown", (int) Math.ceil(remaining / 1000.0));
             }
         }
         return null;
     }
 
-    private boolean isSimilar(String msg1, String msg2) {
-        if (msg1.equals(msg2)) return true;
-
-        if (Math.abs(msg1.length() - msg2.length()) > MAX_LEVENSHTEIN_LENGTH_DIFF) {
-            return false;
-        }
-
-        double jaccard = calculateJaccardSimilarity(msg1, msg2);
-        int levenshtein = calculateLevenshteinDistance(msg1, msg2);
-
-        if (msg1.length() < 8 || msg2.length() < 8) {
-            return jaccard >= 0.85 || levenshtein <= 2;
-        }
-
-        return jaccard >= configManager.getSimilarMessageSimilarityPercent() / 100.0 || levenshtein <= 4;
+    private boolean isLengthInRange(int length, int minLength, int ignoreIfLongerThan) {
+        if (minLength > 0 && length < minLength) return false;
+        return ignoreIfLongerThan <= 0 || length <= ignoreIfLongerThan;
     }
 
-    private double calculateJaccardSimilarity(String s1, String s2) {
-        if (s1.isEmpty() || s2.isEmpty()) return 0.0;
+    private boolean isSimilar(RecentMessage current, RecentMessage previous) {
+        String a = current.normalized;
+        String b = previous.normalized;
 
-        String[] words1 = s1.split("\\s+");
-        String[] words2 = s2.split("\\s+");
+        if (a.equals(b)) return true;
+        if (Math.abs(a.length() - b.length()) > MAX_LEVENSHTEIN_LENGTH_DIFF) return false;
 
-        Set<String> set1 = new HashSet<>();
-        for (String w : words1) {
-            String cleaned = w.replaceAll("[^\\p{L}\\p{N}]", "");
-            if (!cleaned.isEmpty()) set1.add(cleaned);
-        }
+        boolean shortMessage = a.length() < SHORT_MESSAGE_LENGTH || b.length() < SHORT_MESSAGE_LENGTH;
 
-        Set<String> set2 = new HashSet<>();
-        for (String w : words2) {
-            String cleaned = w.replaceAll("[^\\p{L}\\p{N}]", "");
-            if (!cleaned.isEmpty()) set2.add(cleaned);
-        }
+        double requiredJaccard = shortMessage
+                ? SHORT_MESSAGE_JACCARD
+                : configManager.getSimilarMessageSimilarityPercent() / 100.0;
 
-        if (set1.isEmpty() || set2.isEmpty()) return 0.0;
+        if (calculateJaccardSimilarity(current.tokens, previous.tokens) >= requiredJaccard) return true;
 
-        Set<String> intersection = new HashSet<>(set1);
-        intersection.retainAll(set2);
-
-        int unionSize = set1.size() + set2.size() - intersection.size();
-        return unionSize == 0 ? 0.0 : (double) intersection.size() / unionSize;
+        int maxDistance = shortMessage ? SHORT_MESSAGE_MAX_DISTANCE : LONG_MESSAGE_MAX_DISTANCE;
+        return calculateLevenshteinDistance(a, b, maxDistance) <= maxDistance;
     }
 
-    private int calculateLevenshteinDistance(String s1, String s2) {
+    private double calculateJaccardSimilarity(Set<String> tokens1, Set<String> tokens2) {
+        if (tokens1.isEmpty() || tokens2.isEmpty()) return 0.0;
+
+        int intersection = 0;
+        for (String token : tokens1) {
+            if (tokens2.contains(token)) intersection++;
+        }
+
+        int unionSize = tokens1.size() + tokens2.size() - intersection;
+        return unionSize == 0 ? 0.0 : (double) intersection / unionSize;
+    }
+
+    private int calculateLevenshteinDistance(String s1, String s2, int maxDistance) {
         if (s1.equals(s2)) return 0;
         if (s1.isEmpty()) return s2.length();
         if (s2.isEmpty()) return s1.length();
@@ -147,8 +146,6 @@ public class AntiSpamManager {
 
         for (int j = 0; j <= len2; j++) prev[j] = j;
 
-        int maxAllowed = (len1 < 8 || len2 < 8) ? 2 : 4;
-
         for (int i = 1; i <= len1; i++) {
             curr[0] = i;
             int minInRow = i;
@@ -159,8 +156,8 @@ public class AntiSpamManager {
                 if (curr[j] < minInRow) minInRow = curr[j];
             }
 
-            if (minInRow > maxAllowed) {
-                return maxAllowed + 1;
+            if (minInRow > maxDistance) {
+                return maxDistance + 1;
             }
 
             int[] temp = prev;
@@ -171,8 +168,8 @@ public class AntiSpamManager {
         return prev[len2];
     }
 
-    private void addToHistory(Deque<RecentMessage> history, String message, long now) {
-        history.addLast(new RecentMessage(now, message));
+    private void addToHistory(Deque<RecentMessage> history, RecentMessage message) {
+        history.addLast(message);
         while (history.size() > HISTORY_SIZE) history.removeFirst();
     }
 
@@ -183,12 +180,9 @@ public class AntiSpamManager {
     private void cleanupOldEntries() {
         long now = System.currentTimeMillis();
 
-        lastCharacterFlood.entrySet().removeIf(entry ->
-                Bukkit.getPlayer(entry.getKey()) == null || now - entry.getValue() > ENTRY_LIFETIME_MILLIS);
+        lastCharacterFlood.entrySet().removeIf(entry -> now - entry.getValue() > ENTRY_LIFETIME_MILLIS);
 
         playerHistory.entrySet().removeIf(entry -> {
-            if (Bukkit.getPlayer(entry.getKey()) == null) return true;
-
             Deque<RecentMessage> history = entry.getValue();
             history.removeIf(msg -> now - msg.timestamp > ENTRY_LIFETIME_MILLIS);
             return history.isEmpty();
@@ -198,58 +192,53 @@ public class AntiSpamManager {
     private AntiSpamResult checkCharacterFlood(Player player, String message, long now) {
         if (!configManager.isCharacterFloodEnabled()) return null;
 
-        int maxChars = configManager.getCharacterFloodMaxRepeatingChars();
-        int maxPattern = configManager.getCharacterFloodMaxRepeatingPattern();
-
-        boolean isFlood = false;
-
-        int currentStreak = 1;
-        for (int i = 1; i < message.length(); i++) {
-            if (message.charAt(i) == message.charAt(i - 1)) {
-                currentStreak++;
-                if (currentStreak > maxChars) {
-                    isFlood = true;
-                    break;
-                }
-            } else {
-                currentStreak = 1;
-            }
-        }
-
-        if (!isFlood && maxPattern > 1 && message.length() >= 4) {
-            for (int len = 2; len <= 4; len++) {
-                for (int i = 0; i <= message.length() - len * 2; i++) {
-                    String pattern = message.substring(i, i + len);
-                    int count = 1;
-                    int pos = i + len;
-                    while (pos + len <= message.length() && message.substring(pos, pos + len).equals(pattern)) {
-                        count++;
-                        pos += len;
-                        if (count > maxPattern) {
-                            isFlood = true;
-                            break;
-                        }
-                    }
-                    if (isFlood) break;
-                }
-                if (isFlood) break;
-            }
-        }
+        boolean isFlood = hasRepeatingChars(message, configManager.getCharacterFloodMaxRepeatingChars())
+                || hasRepeatingPattern(message, configManager.getCharacterFloodMaxRepeatingPattern());
 
         if (!isFlood) return null;
 
         UUID uuid = player.getUniqueId();
         long last = lastCharacterFlood.getOrDefault(uuid, 0L);
-        int cdSeconds = configManager.getCharacterFloodCooldownSeconds();
+        int cooldownSeconds = configManager.getCharacterFloodCooldownSeconds();
         long elapsed = now - last;
 
-        if (elapsed < cdSeconds * 1000L) {
-            int remaining = (int) Math.ceil((cdSeconds * 1000L - elapsed) / 1000.0);
+        if (elapsed < cooldownSeconds * 1000L) {
+            int remaining = (int) Math.ceil((cooldownSeconds * 1000L - elapsed) / 1000.0);
             return new AntiSpamResult("character-flood", Math.max(1, remaining));
         }
 
         lastCharacterFlood.put(uuid, now);
-        return new AntiSpamResult("character-flood-first", cdSeconds);
+        return new AntiSpamResult("character-flood-first", cooldownSeconds);
+    }
+
+    private boolean hasRepeatingChars(String message, int maxRepeating) {
+        int streak = 1;
+        for (int i = 1; i < message.length(); i++) {
+            if (message.charAt(i) == message.charAt(i - 1)) {
+                if (++streak > maxRepeating) return true;
+            } else {
+                streak = 1;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasRepeatingPattern(String message, int maxRepeating) {
+        if (maxRepeating <= 1 || message.length() < MIN_FLOOD_PATTERN_LENGTH * 2) return false;
+
+        for (int length = MIN_FLOOD_PATTERN_LENGTH; length <= MAX_FLOOD_PATTERN_LENGTH; length++) {
+            for (int start = 0; start + length * 2 <= message.length(); start++) {
+                int count = 1;
+                int position = start + length;
+
+                while (position + length <= message.length()
+                        && message.regionMatches(start, message, position, length)) {
+                    if (++count > maxRepeating) return true;
+                    position += length;
+                }
+            }
+        }
+        return false;
     }
 
     public void reload() {
@@ -259,13 +248,24 @@ public class AntiSpamManager {
 
     private static class RecentMessage {
         final long timestamp;
-        final String message;
         final String normalized;
+        final Set<String> tokens;
 
         RecentMessage(long timestamp, String message) {
             this.timestamp = timestamp;
-            this.message = message;
-            this.normalized = WordNormalizer.normalize(message, "low");
+            this.normalized = WordNormalizer.normalizeForSimilarity(message);
+            this.tokens = tokenize(this.normalized);
+        }
+
+        private static Set<String> tokenize(String normalized) {
+            if (normalized.isEmpty()) return Set.of();
+
+            Set<String> tokens = new HashSet<>();
+            for (String word : WHITESPACE.split(normalized)) {
+                String cleaned = NON_ALPHANUMERIC.matcher(word).replaceAll("");
+                if (!cleaned.isEmpty()) tokens.add(cleaned);
+            }
+            return tokens;
         }
     }
 }

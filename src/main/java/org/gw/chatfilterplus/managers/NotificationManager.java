@@ -2,6 +2,7 @@ package org.gw.chatfilterplus.managers;
 
 import lombok.Getter;
 import org.bukkit.Bukkit;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.gw.chatfilterplus.ChatFilterPlus;
 
@@ -42,7 +43,7 @@ public class NotificationManager {
     }
 
     public void notifyPlayer(Player player, FilterType type, String firstItem) {
-        executeActionsForType(type, player, "player", null);
+        configManager.executeActions(type, player, "player", null);
     }
 
     public void notifyAdmins(Player player, FilterType type, List<String> items) {
@@ -54,21 +55,24 @@ public class NotificationManager {
             if (!isNotificationsEnabled(admin)) continue;
             if (configManager.isAdminSelfNotifyEnabled() && admin.equals(player)) continue;
 
-            executeActionsForType(type, admin, "admin", placeholders);
+            configManager.executeActions(type, admin, "admin", placeholders);
         }
     }
 
     public void notifyConsole(Player player, FilterType type, List<String> items) {
         Map<String, String> placeholders = createPlaceholders(player, items);
-        executeActionsForType(type, null, "console", placeholders);
+        configManager.executeActions(type, null, "console", placeholders);
     }
 
     public void notifyDiscord(Player player, FilterType type, List<String> items) {
         Map<String, String> placeholders = createPlaceholders(player, items);
         placeholders.put("original-message", items.isEmpty() ? "[BLOCKED]" : items.get(0));
 
-        String template = getDiscordTemplate(type);
-        String webhookUrl = getDiscordWebhook(type);
+        FileConfiguration config = type.config(configManager);
+        if (!config.getBoolean(type.notificationPath("discord.enabled"), false)) return;
+
+        String template = config.getString(type.notificationPath("discord.message"), "");
+        String webhookUrl = config.getString(type.notificationPath("discord.webhook-url"), "");
 
         if (template.isEmpty() || webhookUrl.isEmpty()) return;
 
@@ -78,36 +82,6 @@ public class NotificationManager {
         }
 
         sendDiscordWebhook(webhookUrl, message);
-    }
-
-    private void executeActionsForType(FilterType type, Player player, String subPath, Map<String, String> placeholders) {
-        switch (type) {
-            case BAD_WORDS -> configManager.executeActionsFromBadWords(player, subPath, placeholders);
-            case LINKS -> configManager.executeActionsFromLinks(player, subPath, placeholders);
-            case CAPS -> configManager.executeActionsFromCaps(player, subPath, placeholders);
-            case BLOCKED_WORDS -> configManager.executeActionsFromBlockedWords(player, subPath, placeholders);
-            case ANTI_SPAM -> configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
-        }
-    }
-
-    private String getDiscordTemplate(FilterType type) {
-        return switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getString("notifications.bad-words.discord.message", "");
-            case LINKS -> configManager.getLinksConfig().getString("notifications.links.discord.message", "");
-            case CAPS -> configManager.getCapsConfig().getString("notifications.caps.discord.message", "");
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getString("notifications.blocked-words.discord.message", "");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("notifications.anti-spam.discord.message", "");
-        };
-    }
-
-    private String getDiscordWebhook(FilterType type) {
-        return switch (type) {
-            case BAD_WORDS -> configManager.getBadWordsConfig().getString("notifications.bad-words.discord.webhook-url", "");
-            case LINKS -> configManager.getLinksConfig().getString("notifications.links.discord.webhook-url", "");
-            case CAPS -> configManager.getCapsConfig().getString("notifications.caps.discord.webhook-url", "");
-            case BLOCKED_WORDS -> configManager.getBlockedWordsConfig().getString("notifications.blocked-words.discord.webhook-url", "");
-            case ANTI_SPAM -> configManager.getAntiSpamConfig().getString("notifications.anti-spam.discord.webhook-url", "");
-        };
     }
 
     private Map<String, String> createPlaceholders(Player player, List<String> items) {
@@ -123,14 +97,7 @@ public class NotificationManager {
     private void sendDiscordWebhook(String webhookUrl, String message) {
         if (webhookUrl.isEmpty() || message.isEmpty()) return;
 
-        String escaped = message
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-
-        String json = "{\"content\":\"" + escaped + "\"}";
+        String json = "{\"content\":\"" + escapeJson(message) + "\"}";
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(webhookUrl))
                 .timeout(Duration.ofSeconds(5))
@@ -145,6 +112,30 @@ public class NotificationManager {
                 plugin.console("&#FF5D00Ошибка отправки в Дискорд: " + e.getMessage());
             }
         });
+    }
+
+    private static String escapeJson(String value) {
+        StringBuilder sb = new StringBuilder(value.length() + 16);
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"' -> sb.append("\\\"");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.toString();
     }
 
     public void reload() {

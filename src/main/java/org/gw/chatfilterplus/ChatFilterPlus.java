@@ -3,10 +3,13 @@ package org.gw.chatfilterplus;
 import lombok.Getter;
 import org.bukkit.Bukkit;
 import org.bukkit.event.EventPriority;
-import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.plugin.EventExecutor;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.gw.chatfilterplus.commands.CommandsHandler;
 import org.gw.chatfilterplus.commands.CommandsTabCompleter;
+import org.gw.chatfilterplus.configs.LegacyPermissionMigrator;
 import org.gw.chatfilterplus.listeners.CommandFilterListener;
 import org.gw.chatfilterplus.listeners.CommandSendListener;
 import org.gw.chatfilterplus.managers.*;
@@ -28,6 +31,7 @@ public class ChatFilterPlus extends JavaPlugin {
     private BlockedWordsManager blockedWordsManager;
     private AntiSpamManager antiSpamManager;
     private WordNormalizer wordNormalizer;
+    private CommandFilterListener commandFilterListener;
 
     @Override
     public void onEnable() {
@@ -79,17 +83,10 @@ public class ChatFilterPlus extends JavaPlugin {
 
         console("&#00FF5A◆ ChatFilterPlus &f| Регистрация &#00FF5Aсобытий &fи &#00FF5Aкоманд...");
 
-        String priorityStr = configManager.getCompatibilityEventPriority().toUpperCase();
-        EventPriority eventPriority;
-        try {
-            eventPriority = EventPriority.valueOf(priorityStr);
-        } catch (IllegalArgumentException e) {
-            eventPriority = EventPriority.LOWEST;
-        }
-
-        Bukkit.getPluginManager().registerEvents(new CommandFilterListener(this, chatManager), this);
+        commandFilterListener = new CommandFilterListener(this, chatManager);
+        Bukkit.getPluginManager().registerEvents(commandFilterListener, this);
         Bukkit.getPluginManager().registerEvents(new CommandSendListener(), this);
-        Bukkit.getPluginManager().registerEvents(chatManager, this);
+        registerChatListener();
 
         getCommand("chatfilterplus").setExecutor(new CommandsHandler(
                 this,
@@ -100,15 +97,64 @@ public class ChatFilterPlus extends JavaPlugin {
                 configManager,
                 chatManager
         ));
-        getCommand("chatfilterplus").setTabCompleter(new CommandsTabCompleter(wordsManager));
+        getCommand("chatfilterplus").setTabCompleter(new CommandsTabCompleter(wordsManager, linksManager));
 
         logCleanupManager.startLogCleanupTask();
+
+        new LegacyPermissionMigrator(this).migrateAsyncIfNeeded();
 
         console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aсистемы проверки &fобновлений...");
         updateChecker = new UpdateChecker(this);
         Bukkit.getPluginManager().registerEvents(updateChecker, this);
 
         return true;
+    }
+
+    private EventPriority resolveChatEventPriority() {
+        String priorityStr = configManager.getCompatibilityEventPriority().toUpperCase();
+        try {
+            return EventPriority.valueOf(priorityStr);
+        } catch (IllegalArgumentException e) {
+            return EventPriority.LOWEST;
+        }
+    }
+
+    private void registerChatListener() {
+        EventPriority eventPriority = resolveChatEventPriority();
+        boolean ignoreCancelled = !configManager.isCompatibilityAggressiveMode();
+        boolean readOnly = eventPriority == EventPriority.MONITOR;
+
+        EventExecutor primary = (listener, event) -> {
+            if (event instanceof AsyncPlayerChatEvent chatEvent) {
+                chatManager.onPlayerChat(chatEvent, readOnly);
+            }
+        };
+
+        Bukkit.getPluginManager().registerEvent(
+                AsyncPlayerChatEvent.class,
+                chatManager,
+                eventPriority,
+                primary,
+                this,
+                ignoreCancelled
+        );
+
+        if (!readOnly) {
+            EventExecutor enforce = (listener, event) -> {
+                if (event instanceof AsyncPlayerChatEvent chatEvent) {
+                    chatManager.enforcePlayerChat(chatEvent);
+                }
+            };
+
+            Bukkit.getPluginManager().registerEvent(
+                    AsyncPlayerChatEvent.class,
+                    chatManager,
+                    EventPriority.HIGHEST,
+                    enforce,
+                    this,
+                    false
+            );
+        }
     }
 
     public boolean reloadConfigs() {
@@ -133,6 +179,13 @@ public class ChatFilterPlus extends JavaPlugin {
         punishmentManager.reload();
         logCleanupManager.reload();
         wordNormalizer.reload(configManager.getSafeWords());
+
+        if (commandFilterListener != null) {
+            commandFilterListener.reload();
+        }
+
+        HandlerList.unregisterAll(chatManager);
+        registerChatListener();
 
         return true;
     }
@@ -235,12 +288,16 @@ public class ChatFilterPlus extends JavaPlugin {
 
     public void console(String message) {
         if (message == null) return;
-        Bukkit.getConsoleSender().sendMessage(HexColors.translate(message));
+        Bukkit.getConsoleSender().sendMessage(HexColors.translateForConsole(message));
     }
 
     public void log(String message) {
         if (configManager != null && configManager.isConsoleLogsEnabled()) {
             console("&#ffff00◆ ChatFilterPlus &f| " + message);
         }
+    }
+
+    public void error(String message) {
+        Bukkit.getConsoleSender().sendMessage(HexColors.translateForConsole("&#FF5D00◆ ChatFilterPlus &f| " + message));
     }
 }

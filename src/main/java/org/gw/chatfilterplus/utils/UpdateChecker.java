@@ -122,7 +122,7 @@ public class UpdateChecker implements Listener {
                 String cleanLatest = cleanVersion(tagName);
                 String cleanCurrent = cleanVersion(plugin.getDescription().getVersion());
 
-                if (!cleanLatest.equals(cleanCurrent)) {
+                if (isNewerVersion(cleanLatest, cleanCurrent)) {
                     updateAvailable = true;
                     latestVersion = tagName;
 
@@ -130,6 +130,9 @@ public class UpdateChecker implements Listener {
                     if (!"on-join".equalsIgnoreCase(mode)) {
                         plugin.getConfigManager().executeActions(null, "update.available", createPlaceholders());
                     }
+                } else {
+                    updateAvailable = false;
+                    latestVersion = null;
                 }
             } catch (Exception e) {
                 plugin.log("Не удалось проверить обновления: &#FF5D00" + e.getMessage());
@@ -149,9 +152,36 @@ public class UpdateChecker implements Listener {
 
     private String cleanVersion(String version) {
         if (version == null) return "";
-        return version.replaceFirst("^v", "")
+        return version.replaceFirst("^[vV]", "")
                 .replaceAll("[^0-9.]", "")
                 .trim();
+    }
+
+    private boolean isNewerVersion(String latest, String current) {
+        if (latest == null || latest.isEmpty()) return false;
+        if (current == null || current.isEmpty()) return true;
+        if (latest.equals(current)) return false;
+
+        String[] latestParts = latest.split("\\.");
+        String[] currentParts = current.split("\\.");
+        int length = Math.max(latestParts.length, currentParts.length);
+
+        for (int i = 0; i < length; i++) {
+            int latestPart = i < latestParts.length ? parseVersionPart(latestParts[i]) : 0;
+            int currentPart = i < currentParts.length ? parseVersionPart(currentParts[i]) : 0;
+            if (latestPart > currentPart) return true;
+            if (latestPart < currentPart) return false;
+        }
+        return false;
+    }
+
+    private int parseVersionPart(String part) {
+        if (part == null || part.isEmpty()) return 0;
+        try {
+            return Integer.parseInt(part);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     private Map<String, String> createPlaceholders() {
