@@ -21,7 +21,6 @@ permissions:
     default: op
   chatfilterplus.bypass.chatfilter.antispam:
     default: false
-    description: Legacy 2.1 alias; implies chatfilterplus.bypass.chatfilter.spam
     children:
       chatfilterplus.bypass.chatfilter.spam: true
   chatfilterplus.bypass.punishment.badwords:
@@ -36,7 +35,6 @@ permissions:
     default: op
   chatfilterplus.bypass.punishment.antispam:
     default: false
-    description: Legacy 2.1 alias; implies chatfilterplus.bypass.punishment.spam
     children:
       chatfilterplus.bypass.punishment.spam: true
   chatfilterplus.admin.notify:
