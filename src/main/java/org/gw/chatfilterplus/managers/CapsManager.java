@@ -133,10 +133,10 @@ public class CapsManager {
         try {
             configManager.getCapsConfig().save(new java.io.File(plugin.getDataFolder(), "caps.yml"));
             loadWhitelist();
-            plugin.log("Добавлено слово в whitelist капса: &#ffff00" + lowerWord);
+            plugin.log("Добавлено слово в вайтлист капса: &#ffff00" + lowerWord);
             return true;
         } catch (Exception e) {
-            plugin.console("&#FF5D00Ошибка при добавлении слова в caps whitelist: " + e.getMessage());
+            plugin.console("&#FF5D00Ошибка при добавлении слова в вайтлиста капса: " + e.getMessage());
             return false;
         }
     }
@@ -157,10 +157,10 @@ public class CapsManager {
         try {
             configManager.getCapsConfig().save(new java.io.File(plugin.getDataFolder(), "caps.yml"));
             loadWhitelist();
-            plugin.log("Удалено слово из whitelist капса: &#ffff00" + lowerWord);
+            plugin.log("Удалено слово из вайтлиста капса: &#ffff00" + lowerWord);
             return true;
         } catch (Exception e) {
-            plugin.console("&#FF5D00Ошибка при удалении слова из caps whitelist: " + e.getMessage());
+            plugin.console("&#FF5D00Ошибка при удалении слова из вайтлиста капса: " + e.getMessage());
             return false;
         }
     }

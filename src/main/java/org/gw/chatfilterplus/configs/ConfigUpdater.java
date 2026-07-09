@@ -44,7 +44,7 @@ public class ConfigUpdater {
         }
 
         userConfig.set("config-version", defaultConfig.getString("config-version", "1.0"));
-        saveConfig(targetFile, userConfig, "Конфиг &#ffff00" + targetFile.getName() + " &fобновлён до версии &#ffff00" + defaultConfig.getString("config-version", "1.0"));
+        saveConfig(targetFile, userConfig, "Конфиг &#ffff00" + targetFile.getName() + " &fобновлён до версии &#ffff00" + defaultConfig.getString("config-version", "2.1"));
         return changed;
     }
 

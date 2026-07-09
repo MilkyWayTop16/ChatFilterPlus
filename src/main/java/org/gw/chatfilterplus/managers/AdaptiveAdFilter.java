@@ -116,7 +116,7 @@ public class AdaptiveAdFilter {
         if (list.stream().anyMatch(k -> k.equalsIgnoreCase(trimmed))) return false;
 
         list.add(trimmed);
-        return savePromoKeywords(list, "Добавлено промо-слово &#ffff00" + trimmed);
+        return savePromoKeywords(list, "Добавлено ключевое слово рекламы &#ffff00" + trimmed);
     }
 
     public boolean removePromoKeyword(String keyword) {
@@ -125,7 +125,7 @@ public class AdaptiveAdFilter {
         List<String> list = new ArrayList<>(promoKeywords);
         if (!list.removeIf(k -> k.equalsIgnoreCase(trimmed))) return false;
 
-        return savePromoKeywords(list, "Удалено промо-слово &#ffff00" + trimmed);
+        return savePromoKeywords(list, "Удалено ключевое слово рекламы &#ffff00" + trimmed);
     }
 
     private boolean savePromoKeywords(List<String> list, String successMessage) {
@@ -136,7 +136,7 @@ public class AdaptiveAdFilter {
             plugin.log(successMessage);
             return true;
         } catch (Exception e) {
-            plugin.console("&#FF5D00Ошибка сохранения promo-keywords: " + e.getMessage());
+            plugin.console("&#FF5D00Ошибка сохранения параметра promo-keywords: " + e.getMessage());
             return false;
         }
     }
@@ -234,10 +234,10 @@ public class AdaptiveAdFilter {
                 recordViolation(state, message, handles, keywords,
                         hasStandard || hasUrlish || !handles.isEmpty() || !accepted.isEmpty());
                 if (configManager.isConsoleLogsEnabled()) {
-                    plugin.log("Реклама score=&#ffff00" + score
-                            + " &flevel=&#ffff00" + state.level
-                            + " &freasons=&#ffff00" + String.join(",", reasons)
-                            + " &f→ &#ffff00" + message);
+                    plugin.log("Реклама счёт=&#ffff00" + score
+                            + " &fуровень=&#ffff00" + state.level
+                            + " &fпричина=&#ffff00" + String.join(",", reasons)
+                            + " &fв &#ffff00" + message);
                 }
             }
         }
@@ -324,13 +324,10 @@ public class AdaptiveAdFilter {
         return key.equals("ip")
                 || key.equals("сервер")
                 || key.equals("канал")
-                || key.equals("donate")
-                || key.equals("донат")
                 || key.equals("ds")
                 || key.equals("dsc")
                 || key.equals("tg")
                 || key.equals("tgk")
-                || key.equals("промо")
                 || key.equals("заходи");
     }
 
@@ -355,7 +352,7 @@ public class AdaptiveAdFilter {
         }
 
         if (configManager.isConsoleLogsEnabled() && (hadLinkSignal || !handles.isEmpty())) {
-            plugin.log("Адаптивный анти-реклама: уровень &#ffff00" + state.level
+            plugin.log("Адаптивная анти-реклама: уровень &#ffff00" + state.level
                     + " &f(handles: &#ffff00" + handles.size() + "&f)");
         }
     }

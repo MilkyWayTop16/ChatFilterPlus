@@ -95,6 +95,16 @@ public final class HexColors {
         int i = 0;
         while (i < input.length()) {
             char c = input.charAt(i);
+            if (c == '<') {
+                // Уже готовый MiniMessage-тег (<gradient:#ff..>, <hover:...>, <click:...> и т.д.)
+                // копируем как есть, иначе hex/legacy-конвертация внутри него сломает синтаксис.
+                int close = input.indexOf('>', i);
+                if (close != -1 && close - i <= 60) {
+                    result.append(input, i, close + 1);
+                    i = close + 1;
+                    continue;
+                }
+            }
             if (c == '&' && i + 1 < input.length()) {
                 char next = input.charAt(i + 1);
                 if (next == '#') {

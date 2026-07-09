@@ -50,24 +50,24 @@ public final class SpamConfigMigrator {
             if (legacyFile.exists()) {
                 if (!currentFile.exists()) {
                     moveFile(legacyFile, currentFile);
-                    plugin.log("Миграция 2.1→2.2: &#ffff00anti-spam.yml &f→ &#ffff00spam.yml &f(настройки сохранены)");
+                    plugin.log("Миграция из версии 2.1 в 2.2: &#ffff00anti-spam.yml &fв &#ffff00spam.yml &f(настройки все сохранены)");
                 } else {
                     mergeLegacyIntoCurrent(legacyFile, currentFile);
                     archiveFile(legacyFile, "anti-spam.yml");
-                    plugin.log("Миграция 2.1→2.2: настройки из &#ffff00anti-spam.yml &fперенесены в &#ffff00spam.yml");
+                    plugin.log("Миграция из версии 2.1 в 2.2: настройки из &#ffff00anti-spam.yml &fперенесены в &#ffff00spam.yml");
                 }
             }
 
             if (currentFile.exists()) {
                 boolean changed = transformKeysInPlace(currentFile);
                 if (changed) {
-                    plugin.log("Миграция 2.1→2.2: ключи &#ffff00anti-spam &f→ &#ffff00spam &fв spam.yml");
+                    plugin.log("Миграция из версии 2.1 в 2.2: ключи &#ffff00anti-spam &fв &#ffff00spam &fв spam.yml");
                 }
             }
 
             migrateLogFiles(dataFolder);
         } catch (Exception e) {
-            plugin.error("Ошибка миграции anti-spam.yml → spam.yml: " + e.getMessage());
+            plugin.error("Ошибка миграции anti-spam.yml в spam.yml: " + e.getMessage());
         }
     }
 
@@ -188,7 +188,7 @@ public final class SpamConfigMigrator {
             try {
                 if (!to.exists()) {
                     moveFile(from, to);
-                    plugin.log("Миграция логов: &#ffff00" + move[0] + " &f→ &#ffff00" + move[1]);
+                    plugin.log("Миграция логов: &#ffff00" + move[0] + " &fв &#ffff00" + move[1]);
                 } else {
                     archiveFile(from, move[0]);
                 }
