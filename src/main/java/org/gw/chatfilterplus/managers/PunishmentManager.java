@@ -8,11 +8,14 @@ import org.bukkit.entity.Player;
 import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.configs.ConfigUtils;
 import org.gw.chatfilterplus.utils.PermissionCompat;
+import org.gw.chatfilterplus.utils.PlaceholderUtil;
 
 import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,11 +24,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Getter
 public class PunishmentManager {
 
+    private static final long VIOLATION_RETENTION_MILLIS = 7L * 24 * 60 * 60 * 1000;
+
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
 
     private final Map<FilterType, File> punishmentLogFiles = new EnumMap<>(FilterType.class);
-    private final Map<FilterType, Map<String, AtomicInteger>> violations = new EnumMap<>(FilterType.class);
+    private final Map<FilterType, Map<String, ViolationCounter>> violations = new EnumMap<>(FilterType.class);
     private final Map<FilterType, Map<String, Map<String, Long>>> notificationCooldowns = new EnumMap<>(FilterType.class);
     private final Map<FilterType, Set<String>> exemptPlayers = new EnumMap<>(FilterType.class);
     private final Map<FilterType, Set<String>> exemptGroups = new EnumMap<>(FilterType.class);
@@ -33,6 +38,20 @@ public class PunishmentManager {
     private final Map<FilterType, Boolean> punishmentsEnabled = new EnumMap<>(FilterType.class);
 
     private final ThreadLocal<SimpleDateFormat> dateFormat = ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
+
+    private static final class ViolationCounter {
+        private final AtomicInteger count = new AtomicInteger();
+        private volatile long lastViolationAt;
+
+        int increment() {
+            lastViolationAt = System.currentTimeMillis();
+            return count.incrementAndGet();
+        }
+
+        long lastViolationAt() {
+            return lastViolationAt;
+        }
+    }
 
     public PunishmentManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
@@ -91,7 +110,10 @@ public class PunishmentManager {
         long currentTime = System.currentTimeMillis();
 
         for (FilterType type : FilterType.values()) {
-            violations.get(type).entrySet().removeIf(entry -> Bukkit.getPlayerExact(entry.getKey()) == null);
+            violations.get(type).entrySet().removeIf(entry -> {
+                if (Bukkit.getPlayerExact(entry.getKey()) != null) return false;
+                return currentTime - entry.getValue().lastViolationAt() > VIOLATION_RETENTION_MILLIS;
+            });
             cleanCooldowns(notificationCooldowns.get(type), currentTime);
         }
     }
@@ -109,8 +131,8 @@ public class PunishmentManager {
 
         String playerName = player.getName();
         int violationCount = violations.get(type)
-                .computeIfAbsent(playerName, k -> new AtomicInteger(0))
-                .incrementAndGet();
+                .computeIfAbsent(playerName, k -> new ViolationCounter())
+                .increment();
 
         ConfigurationSection stagesSection = type.config(configManager)
                 .getConfigurationSection(type.punishmentPath("stages"));
@@ -159,9 +181,11 @@ public class PunishmentManager {
         if (actions == null || actions.isEmpty()) return Collections.emptyList();
 
         String playerName = player.getName();
-        String wordsJoined = String.join(", ", items);
-        String originalMessage = items.isEmpty() ? "[CAPS]" : String.join(" ", items);
-        String reason = items.isEmpty() ? "" : items.get(0);
+        String wordsJoined = PlaceholderUtil.sanitizeCommandValue(String.join(", ", items));
+        String originalMessage = items.isEmpty()
+                ? "[CAPS]"
+                : PlaceholderUtil.sanitizeCommandValue(String.join(" ", items));
+        String reason = items.isEmpty() ? "" : PlaceholderUtil.sanitizeCommandValue(items.get(0));
 
         List<String> result = new ArrayList<>(actions.size());
         for (String action : actions) {
@@ -171,6 +195,8 @@ public class PunishmentManager {
 
             if (trimmed.startsWith("[console-command]")) {
                 trimmed = trimmed.substring("[console-command]".length()).trim();
+            } else if (trimmed.startsWith("[")) {
+                continue;
             }
 
             String cmd = trimmed
@@ -206,7 +232,12 @@ public class PunishmentManager {
         File logFile = punishmentLogFiles.get(type);
 
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(logFile, true))) {
+            try (BufferedWriter writer = Files.newBufferedWriter(
+                    logFile.toPath(),
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE,
+                    StandardOpenOption.APPEND)) {
                 writer.write(message);
                 writer.newLine();
             } catch (IOException e) {
@@ -216,21 +247,35 @@ public class PunishmentManager {
     }
 
     private void updateNotificationCooldowns(String playerName, List<String> cooldowns, FilterType type) {
-        if (cooldowns.isEmpty()) return;
+        if (cooldowns == null || cooldowns.isEmpty()) return;
 
         Map<String, Long> playerCooldowns = notificationCooldowns.get(type)
                 .computeIfAbsent(playerName, k -> new ConcurrentHashMap<>());
         long currentTime = System.currentTimeMillis();
 
         for (String cooldown : cooldowns) {
+            if (cooldown == null) continue;
             String[] parts = cooldown.split(":", 2);
             if (parts.length != 2) continue;
 
             long durationMillis = ConfigUtils.parseDuration(parts[1].trim());
             if (durationMillis > 0) {
-                playerCooldowns.put(parts[0].trim(), currentTime + durationMillis);
+                playerCooldowns.put(parts[0].trim().toLowerCase(Locale.ROOT), currentTime + durationMillis);
             }
         }
+    }
+
+    public boolean isNotificationOnCooldown(String playerName, FilterType type, String channel) {
+        if (playerName == null || type == null || channel == null) return false;
+        Map<String, Long> playerCooldowns = notificationCooldowns.get(type).get(playerName);
+        if (playerCooldowns == null || playerCooldowns.isEmpty()) return false;
+
+        long now = System.currentTimeMillis();
+        Long allUntil = playerCooldowns.get("all");
+        if (allUntil != null && now < allUntil) return true;
+
+        Long until = playerCooldowns.get(channel.toLowerCase(Locale.ROOT));
+        return until != null && now < until;
     }
 
     public void reload() {

@@ -22,3 +22,9 @@ logs/
 world/
 world_nether/
 world_the_end/
+
+# исходники сторонних плагинов, скачанные для анализа (чужие лицензии — не коммитить)
+references/
+
+# временный classpath для dev-tests
+cp.txt

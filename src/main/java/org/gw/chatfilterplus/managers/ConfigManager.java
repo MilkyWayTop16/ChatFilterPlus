@@ -166,6 +166,10 @@ public class ConfigManager {
         return mainConfig.getCacheCleanupRetentionMillis();
     }
 
+    public boolean isCacheCleanupEnabled() {
+        return mainConfig.isCacheCleanupEnabled();
+    }
+
     public String getCompatibilityEventPriority() {
         return mainConfig.getCompatibilityEventPriority();
     }

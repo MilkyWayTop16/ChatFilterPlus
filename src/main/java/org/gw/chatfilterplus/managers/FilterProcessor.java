@@ -2,7 +2,7 @@ package org.gw.chatfilterplus.managers;
 
 import lombok.Getter;
 import org.gw.chatfilterplus.ChatFilterPlus;
-import org.gw.chatfilterplus.utils.ProfanityEngine;
+import org.gw.chatfilterplus.managers.profanity.ProfanityEngine;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,14 +28,6 @@ public class FilterProcessor {
         this.linksManager = linksManager;
         this.capsManager = capsManager;
         this.blockedWordsManager = blockedWordsManager;
-    }
-
-    public MessageCacheManager.CachedMessage processMessage(String originalMessage,
-                                                            boolean bypassBadWords,
-                                                            boolean bypassLinks,
-                                                            boolean bypassBlockedWords,
-                                                            boolean bypassCaps) {
-        return processMessage(originalMessage, null, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
     }
 
     public MessageCacheManager.CachedMessage processMessage(String originalMessage,

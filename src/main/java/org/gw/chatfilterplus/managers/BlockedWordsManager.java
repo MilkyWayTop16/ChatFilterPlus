@@ -3,7 +3,7 @@ package org.gw.chatfilterplus.managers;
 import lombok.Getter;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.gw.chatfilterplus.ChatFilterPlus;
-import org.gw.chatfilterplus.utils.ProfanityEngine;
+import org.gw.chatfilterplus.managers.profanity.ProfanityEngine;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -33,7 +33,8 @@ public class BlockedWordsManager {
         List<String> words = configManager.getBlockedWordsList();
         String level = configManager.getBlockedWordsFilterLevel();
 
-        ProfanityEngine engine = new ProfanityEngine(words, List.of(), level, false);
+        ProfanityEngine engine = new ProfanityEngine(words, List.of(), level, false,
+                ProfanityEngine.PrecisionOptions.forLevel(level), plugin.protectedNameSupplier());
         engineRef.set(engine);
         wordsListRef.set(List.copyOf(words));
     }

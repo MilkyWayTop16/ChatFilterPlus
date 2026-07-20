@@ -6,7 +6,9 @@ import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.configs.ConfigUtils;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -108,21 +110,26 @@ public class LogCleanupManager {
     }
 
     private void appendLog(File file, String entry) throws IOException {
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file, true))) {
+        try (BufferedWriter writer = Files.newBufferedWriter(
+                file.toPath(),
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.APPEND)) {
             writer.write(entry);
             writer.newLine();
         }
     }
 
     private void truncateFile(File file) throws IOException {
-        Files.writeString(file.toPath(), "");
+        Files.writeString(file.toPath(), "", StandardCharsets.UTF_8);
     }
 
     private void keepLatestLines(File file, long maxLines) throws IOException {
         if (!file.exists()) return;
 
         Deque<String> lines = new ArrayDeque<>();
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 lines.add(line);
@@ -130,7 +137,7 @@ public class LogCleanupManager {
             }
         }
 
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
+        try (BufferedWriter writer = Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8)) {
             for (String line : lines) {
                 writer.write(line);
                 writer.newLine();
@@ -144,7 +151,7 @@ public class LogCleanupManager {
         long now = System.currentTimeMillis();
         List<String> kept = new ArrayList<>();
 
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 String ts = extractTimestamp(line);
@@ -161,7 +168,7 @@ public class LogCleanupManager {
             }
         }
 
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
+        try (BufferedWriter writer = Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8)) {
             for (String line : kept) {
                 writer.write(line);
                 writer.newLine();
@@ -172,7 +179,7 @@ public class LogCleanupManager {
     private long countLines(File file) throws IOException {
         if (!file.exists()) return 0;
         long count = 0;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
             while (reader.readLine() != null) count++;
         }
         return count;

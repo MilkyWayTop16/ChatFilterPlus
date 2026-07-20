@@ -5,7 +5,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.HexColors;
-import org.gw.chatfilterplus.utils.ProfanityEngine;
+import org.gw.chatfilterplus.managers.profanity.ProfanityEngine;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -36,7 +36,8 @@ public class WordsManager {
         String level = configManager.getBadWordsFilterLevel();
         boolean english = configManager.isBadWordsDetectEnglishLookalikes();
 
-        ProfanityEngine engine = new ProfanityEngine(badWordsList, safeWords, level, english);
+        ProfanityEngine engine = new ProfanityEngine(badWordsList, safeWords, level, english,
+                ProfanityEngine.PrecisionOptions.forLevel(level), plugin.protectedNameSupplier());
         engineRef.set(engine);
 
         plugin.log("Загружено &#ffff00" + badWordsList.size()

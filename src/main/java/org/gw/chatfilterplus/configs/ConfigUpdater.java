@@ -12,6 +12,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public class ConfigUpdater {
 
@@ -57,6 +62,18 @@ public class ConfigUpdater {
         }
     }
 
+    /**
+     * Technical reference lists that must gain new default entries on upgrade. Without this an
+     * existing config keeps its old list forever (a present key is never touched), so a server
+     * upgrading from an older version would detect fewer domains than a fresh install.
+     * Only lists that are reference data belong here — user-owned lists (whitelist domains,
+     * exception players/groups, bad-words) must never be repopulated behind the admin's back.
+     */
+    private static final Set<String> UNION_MERGED_LISTS = Set.of(
+            "filter.smart-detection.tlds",
+            "filter.smart-detection.quick-triggers"
+    );
+
     private boolean mergeMissingKeys(FileConfiguration user, FileConfiguration defaults, String path) {
         boolean changed = false;
         ConfigurationSection defaultSection = path.isEmpty() ? defaults : defaults.getConfigurationSection(path);
@@ -72,6 +89,11 @@ public class ConfigUpdater {
                 continue;
             }
 
+            if (UNION_MERGED_LISTS.contains(fullKey)) {
+                changed |= mergeListUnion(user, defaultSection, key, fullKey);
+                continue;
+            }
+
             if (defaultSection.isConfigurationSection(key)) {
                 if (!user.isConfigurationSection(fullKey)) {
                     user.createSection(fullKey);
@@ -80,6 +102,32 @@ public class ConfigUpdater {
             }
         }
         return changed;
+    }
+
+    /** Appends default entries the user's list is missing, preserving their own order and additions. */
+    private boolean mergeListUnion(FileConfiguration user, ConfigurationSection defaults,
+                                   String key, String fullKey) {
+        List<String> defaultList = defaults.getStringList(key);
+        if (defaultList.isEmpty()) return false;
+
+        List<String> userList = user.getStringList(fullKey);
+        Set<String> seen = new HashSet<>();
+        for (String value : userList) {
+            if (value != null) seen.add(value.trim().toLowerCase(Locale.ROOT));
+        }
+
+        List<String> merged = new ArrayList<>(userList);
+        boolean added = false;
+        for (String value : defaultList) {
+            if (value == null) continue;
+            if (seen.add(value.trim().toLowerCase(Locale.ROOT))) {
+                merged.add(value);
+                added = true;
+            }
+        }
+
+        if (added) user.set(fullKey, merged);
+        return added;
     }
 
     private FileConfiguration loadDefaultConfig(String resourcePath) {

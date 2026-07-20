@@ -31,11 +31,32 @@ public class AdaptiveAdFilter {
     }
 
     private static final class PlayerAdState {
-        int level;
-        long lastViolationAt;
+        private int level;
+        private long lastViolationAt;
         final Deque<AdFingerprint> history = new ConcurrentLinkedDeque<>();
         final Set<String> knownHandles = ConcurrentHashMap.newKeySet();
         final Set<String> knownKeywords = ConcurrentHashMap.newKeySet();
+
+        synchronized int currentLevel() {
+            return level;
+        }
+
+        synchronized long lastActivityAt() {
+            return lastViolationAt;
+        }
+
+        synchronized int escalate(int maxLevel) {
+            level = Math.min(maxLevel, level + 1);
+            lastViolationAt = System.currentTimeMillis();
+            return level;
+        }
+
+        synchronized boolean expireIfStale(long ttlMillis) {
+            if (level <= 0) return false;
+            if (System.currentTimeMillis() - lastViolationAt <= ttlMillis) return false;
+            level = 0;
+            return true;
+        }
     }
 
     private final ChatFilterPlus plugin;
@@ -146,7 +167,7 @@ public class AdaptiveAdFilter {
         PlayerAdState state = states.get(playerId);
         if (state == null) return 0;
         expireIfNeeded(state);
-        return state.level;
+        return state.currentLevel();
     }
 
     public List<AdHit> evaluate(UUID playerId, String message, List<LinksManager.LinkMatch> standardMatches) {
@@ -160,7 +181,7 @@ public class AdaptiveAdFilter {
         if (existing != null) {
             expireIfNeeded(existing);
         }
-        int level = existing == null ? 0 : existing.level;
+        int level = existing == null ? 0 : existing.currentLevel();
 
         if (level == 0 && !hasStandard
                 && message.indexOf('@') < 0
@@ -172,7 +193,7 @@ public class AdaptiveAdFilter {
         if (state != null && state != existing) {
             expireIfNeeded(state);
         }
-        level = state == null ? 0 : state.level;
+        level = state == null ? 0 : state.currentLevel();
 
         List<AdHit> hits = new ArrayList<>();
 
@@ -235,7 +256,7 @@ public class AdaptiveAdFilter {
                         hasStandard || hasUrlish || !handles.isEmpty() || !accepted.isEmpty());
                 if (configManager.isConsoleLogsEnabled()) {
                     plugin.log("Реклама счёт=&#ffff00" + score
-                            + " &fуровень=&#ffff00" + state.level
+                            + " &fуровень=&#ffff00" + state.currentLevel()
                             + " &fпричина=&#ffff00" + String.join(",", reasons)
                             + " &fв &#ffff00" + message);
                 }
@@ -336,8 +357,7 @@ public class AdaptiveAdFilter {
                                  Set<String> handles,
                                  Set<String> keywords,
                                  boolean hadLinkSignal) {
-        state.level = Math.min(maxLevel, state.level + 1);
-        state.lastViolationAt = System.currentTimeMillis();
+        int newLevel = state.escalate(maxLevel);
         for (String handle : handles) {
             if (handle.length() >= 4) state.knownHandles.add(handle);
         }
@@ -352,15 +372,13 @@ public class AdaptiveAdFilter {
         }
 
         if (configManager.isConsoleLogsEnabled() && (hadLinkSignal || !handles.isEmpty())) {
-            plugin.log("Адаптивная анти-реклама: уровень &#ffff00" + state.level
+            plugin.log("Адаптивная анти-реклама: уровень &#ffff00" + newLevel
                     + " &f(handles: &#ffff00" + handles.size() + "&f)");
         }
     }
 
     private void expireIfNeeded(PlayerAdState state) {
-        if (state.level <= 0) return;
-        if (System.currentTimeMillis() - state.lastViolationAt > suspicionTtlMillis) {
-            state.level = 0;
+        if (state.expireIfStale(suspicionTtlMillis)) {
             state.history.clear();
             state.knownHandles.clear();
             state.knownKeywords.clear();
@@ -387,10 +405,9 @@ public class AdaptiveAdFilter {
             long now = System.currentTimeMillis();
             states.entrySet().removeIf(entry -> {
                 PlayerAdState state = entry.getValue();
-                if (state.level <= 0 && state.history.isEmpty()) return true;
-                if (now - state.lastViolationAt > suspicionTtlMillis * 2) return true;
                 expireIfNeeded(state);
-                return state.level <= 0 && state.history.isEmpty();
+                if (state.currentLevel() <= 0 && state.history.isEmpty()) return true;
+                return now - state.lastActivityAt() > suspicionTtlMillis * 2;
             });
         }, 20L * 60, 20L * 60);
     }

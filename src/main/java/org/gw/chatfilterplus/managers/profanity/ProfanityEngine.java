@@ -1,6 +1,9 @@
-package org.gw.chatfilterplus.utils;
+package org.gw.chatfilterplus.managers.profanity;
+
+import org.gw.chatfilterplus.utils.TextNormalizer;
 
 import java.util.*;
+import java.util.function.Supplier;
 
 public final class ProfanityEngine {
 
@@ -16,60 +19,29 @@ public final class ProfanityEngine {
         }
     }
 
-    private static final int ALPHABET = 36;
+    private static final int SPACED_FRAGMENTS_CONFIDENCE = 95;
+    private static final int MAX_FRAGMENT_LENGTH = 3;
+    private static final int MIN_SPACED_TOKENS = 2;
 
-    private static final class TrieNode {
-        final TrieNode[] children = new TrieNode[ALPHABET];
-        String word;
-    }
+    private static final String[] FUNCTION_WORDS_RAW = {
+            "у", "в", "на", "за", "по", "до", "от", "из", "с", "к", "о", "об", "под", "над", "при",
+            "про", "для", "без", "через", "между", "перед", "после", "около", "среди", "вокруг",
+            "и", "а", "но", "да", "нет", "не", "ну", "же", "ли", "бы", "то", "так", "как", "что",
+            "это", "вот", "там", "тут", "здесь", "уже", "еще", "ещё", "только", "даже", "тоже",
+            "если", "чтобы", "когда", "где", "куда", "или", "либо", "ведь", "разве", "неужели",
+            "я", "ты", "он", "она", "оно", "мы", "вы", "они", "мне", "тебе", "ему", "ей", "нам",
+            "вам", "им", "меня", "тебя", "его", "ее", "её", "нас", "вас", "их", "кто", "чей",
+            "весь", "все", "вся", "себя", "свой", "мой", "твой", "наш", "ваш"
+    };
 
-    private static final class CompactView {
-        final String compact;
-        final int[] originIndex;
+    private static final Set<String> FUNCTION_WORDS = Set.copyOf(Arrays.asList(FUNCTION_WORDS_RAW));
 
-        CompactView(String compact, int[] originIndex) {
-            this.compact = compact;
-            this.originIndex = originIndex;
-        }
-
-        static CompactView of(String message, boolean collapseRepeats) {
-            int len = message.length();
-            char[] compactBuf = new char[len];
-            int[] originBuf = new int[len];
-            int size = 0;
-            char last = 0;
-
-            for (int i = 0; i < len; i++) {
-                int mapped = TextNormalizer.mapChar(message.charAt(i));
-                if (mapped <= 0) continue;
-                char ch = (char) mapped;
-                if (collapseRepeats && size > 0 && ch == last) {
-                    originBuf[size - 1] = i;
-                    continue;
-                }
-                compactBuf[size] = ch;
-                originBuf[size] = i;
-                size++;
-                last = ch;
-            }
-
-            return new CompactView(new String(compactBuf, 0, size), Arrays.copyOf(originBuf, size));
-        }
-
-        int originalStart(int compactStart) {
-            return originIndex[compactStart];
-        }
-
-        int originalEndExclusive(int compactEndExclusive) {
-            if (compactEndExclusive <= 0) return 0;
-            return originIndex[compactEndExclusive - 1] + 1;
-        }
-    }
-
-    private final TrieNode root = new TrieNode();
-    private final TrieNode fuzzyRoot = new TrieNode();
+    private final ProfanityTrie exactTrie = new ProfanityTrie();
+    private final ProfanityTrie fuzzyTrie = new ProfanityTrie();
+    private final ProfanityTrie safeTrie = new ProfanityTrie();
     private final Set<String> dictionary = new HashSet<>();
     private final Set<String> safeExact = new HashSet<>();
+    private final Supplier<Set<String>> protectedNames;
     private final Map<String, String> fuzzyVariants = new HashMap<>();
     private final String level;
     private final int maxGap;
@@ -78,6 +50,7 @@ public final class ProfanityEngine {
     private final PrecisionOptions precision;
     private final int minWordLength = 3;
     private boolean fuzzyHasEntries;
+    private boolean safeTrieHasEntries;
 
     public ProfanityEngine(Collection<String> badWords,
                            Collection<String> safeWords,
@@ -91,6 +64,16 @@ public final class ProfanityEngine {
                            String filterLevel,
                            boolean detectEnglishLookalikes,
                            PrecisionOptions precision) {
+        this(badWords, safeWords, filterLevel, detectEnglishLookalikes, precision, Set::of);
+    }
+
+    public ProfanityEngine(Collection<String> badWords,
+                           Collection<String> safeWords,
+                           String filterLevel,
+                           boolean detectEnglishLookalikes,
+                           PrecisionOptions precision,
+                           Supplier<Set<String>> protectedNames) {
+        this.protectedNames = protectedNames == null ? Set::of : protectedNames;
         this.level = filterLevel == null ? "high" : filterLevel.toLowerCase(Locale.ROOT);
         this.collapseRepeats = !"low".equals(this.level);
         this.fuzzyEnabled = "high".equals(this.level);
@@ -105,7 +88,13 @@ public final class ProfanityEngine {
             for (String safe : safeWords) {
                 if (safe == null) continue;
                 String norm = TextNormalizer.normalizeCompact(safe, true);
-                if (norm.length() >= 2) safeExact.add(norm);
+                if (norm.length() >= 2) {
+                    safeExact.add(norm);
+                    if (norm.length() >= minWordLength) {
+                        safeTrie.insertWord(norm);
+                        safeTrieHasEntries = true;
+                    }
+                }
             }
         }
 
@@ -119,27 +108,13 @@ public final class ProfanityEngine {
         }
     }
 
-    private static int childIndex(char c) {
-        if (c >= 'a' && c <= 'z') return c - 'a';
-        if (c >= '0' && c <= '9') return 26 + (c - '0');
-        return -1;
-    }
-
-    private static TrieNode getChild(TrieNode node, char c) {
-        int idx = childIndex(c);
-        if (idx < 0) return null;
-        return node.children[idx];
-    }
-
-    private static TrieNode getOrCreateChild(TrieNode node, char c) {
-        int idx = childIndex(c);
-        if (idx < 0) return null;
-        TrieNode child = node.children[idx];
-        if (child == null) {
-            child = new TrieNode();
-            node.children[idx] = child;
+    private static String lexicalForm(String token) {
+        StringBuilder sb = new StringBuilder(token.length());
+        for (int i = 0; i < token.length(); i++) {
+            char c = token.charAt(i);
+            if (Character.isLetter(c)) sb.append(Character.toLowerCase(c));
         }
-        return child;
+        return sb.toString();
     }
 
     private void addDictionaryWord(String word) {
@@ -149,12 +124,7 @@ public final class ProfanityEngine {
         if (safeExact.contains(norm)) return;
         if (!dictionary.add(norm)) return;
 
-        TrieNode node = root;
-        for (int i = 0; i < norm.length(); i++) {
-            node = getOrCreateChild(node, norm.charAt(i));
-            if (node == null) return;
-        }
-        node.word = norm;
+        exactTrie.insertWord(norm);
 
         int minFuzzy = Math.max(5, precision.minFuzzyDictLength());
         if (fuzzyEnabled && norm.length() >= minFuzzy) {
@@ -165,19 +135,7 @@ public final class ProfanityEngine {
                 if (dictionary.contains(reduced)) continue;
                 if (fuzzyVariants.putIfAbsent(reduced, norm) != null) continue;
 
-                TrieNode fuzzyNode = fuzzyRoot;
-                boolean ok = true;
-                for (int i = 0; i < reduced.length(); i++) {
-                    fuzzyNode = getOrCreateChild(fuzzyNode, reduced.charAt(i));
-                    if (fuzzyNode == null) {
-                        ok = false;
-                        break;
-                    }
-                }
-                if (ok) {
-                    if (fuzzyNode.word == null) {
-                        fuzzyNode.word = norm;
-                    }
+                if (fuzzyTrie.insertReduced(reduced, norm)) {
                     fuzzyHasEntries = true;
                 }
             }
@@ -192,6 +150,31 @@ public final class ProfanityEngine {
         return precision.minConfidence();
     }
 
+    public static boolean hasObfuscation(String message) {
+        return ObfuscationDetector.hasObfuscation(message);
+    }
+
+    private record Token(String text, int start, String compact) {
+        int end() {
+            return start + text.length();
+        }
+    }
+
+    private List<Token> tokenize(String message) {
+        List<Token> tokens = new ArrayList<>();
+        int i = 0;
+        int n = message.length();
+        while (i < n) {
+            while (i < n && Character.isWhitespace(message.charAt(i))) i++;
+            if (i >= n) break;
+            int start = i;
+            while (i < n && !Character.isWhitespace(message.charAt(i))) i++;
+            String text = message.substring(start, i);
+            tokens.add(new Token(text, start, TextNormalizer.normalizeCompact(text, collapseRepeats)));
+        }
+        return tokens;
+    }
+
     public List<Match> findMatches(String message) {
         if (message == null || message.length() < minWordLength || isEmpty()) {
             return List.of();
@@ -201,71 +184,222 @@ public final class ProfanityEngine {
         if ("low".equals(level)) {
             matches = findTokenMatches(message);
         } else {
-            matches = new ArrayList<>(findStreamMatches(message));
-            if (fuzzyEnabled && fuzzyHasEntries
-                    && (!precision.fuzzyRequireObfuscation() || hasObfuscation(message))) {
-                matches.addAll(findFuzzyCompactMatches(message));
+            List<Token> tokens = tokenize(message);
+            matches = new ArrayList<>();
+            for (Token token : tokens) {
+                if (token.compact().length() < minWordLength && token.text().length() < minWordLength) {
+                    continue;
+                }
+                addShifted(matches, findStreamMatches(token.text()), token.start());
+
+                if (fuzzyEnabled && fuzzyHasEntries
+                        && (!precision.fuzzyRequireObfuscation() || hasObfuscation(token.text()))) {
+                    addShifted(matches, findFuzzyCompactMatches(token.text()), token.start());
+                }
             }
+            matches.addAll(findSpacedFragmentMatches(message, tokens));
         }
 
         if (matches.isEmpty()) return matches;
 
+        List<int[]> protectedRegions = "low".equals(level)
+                ? List.of()
+                : findProtectedRegions(tokenize(message));
+
         List<Match> filtered = new ArrayList<>(matches.size());
         int minConf = precision.minConfidence();
         for (Match match : matches) {
-            if (match.confidence() >= minConf) {
-                filtered.add(match);
-            }
+            if (match.confidence() < minConf) continue;
+            if (overlapsProtected(match, protectedRegions)) continue;
+            filtered.add(match);
         }
         return mergeOverlaps(filtered);
     }
 
-    public static boolean hasObfuscation(String message) {
-        if (message == null || message.isEmpty()) return false;
-
-        boolean sawLetter = false;
-        boolean hasLeet = false;
-        boolean hasSeparatorBetweenLetters = false;
-
-        for (int i = 0; i < message.length(); i++) {
-            char c = message.charAt(i);
-
-            if (!hasLeet && isLeetSubstitutionChar(c) && hasAdjacentMappedLetter(message, i)) {
-                hasLeet = true;
-            }
-
-            int mapped = TextNormalizer.mapChar(c);
-            if (mapped > 0) {
-                sawLetter = true;
-            } else if (mapped < 0 && sawLetter) {
-                int j = i + 1;
-                while (j < message.length() && TextNormalizer.mapChar(message.charAt(j)) == 0) {
-                    j++;
-                }
-                if (j < message.length() && TextNormalizer.mapChar(message.charAt(j)) > 0) {
-                    hasSeparatorBetweenLetters = true;
-                }
-            }
+    private List<int[]> findProtectedRegions(List<Token> tokens) {
+        Set<String> names = protectedNames.get();
+        boolean hasNames = names != null && !names.isEmpty();
+        if (!hasNames && !safeTrieHasEntries) {
+            return List.of();
         }
 
-        return hasLeet || hasSeparatorBetweenLetters;
-    }
-
-    private static boolean isLeetSubstitutionChar(char c) {
-        return c == '0' || c == '1' || c == '3' || c == '4' || c == '5' || c == '7'
-                || c == '@' || c == '$' || c == '*' || c == '!';
-    }
-
-    private static boolean hasAdjacentMappedLetter(String message, int index) {
-        for (int i = index - 1; i >= 0; i--) {
-            int mapped = TextNormalizer.mapChar(message.charAt(i));
-            if (mapped > 0) return true;
-            if (mapped < 0) break;
+        List<int[]> regions = new ArrayList<>();
+        for (Token token : tokens) {
+            if (hasNames && isProtectedNameToken(token, names)) {
+                regions.add(new int[]{token.start(), token.end()});
+                continue;
+            }
+            collectSafeRegions(token, regions);
         }
-        for (int i = index + 1; i < message.length(); i++) {
-            int mapped = TextNormalizer.mapChar(message.charAt(i));
-            if (mapped > 0) return true;
-            if (mapped < 0) break;
+        return regions;
+    }
+
+    private boolean isProtectedNameToken(Token token, Set<String> names) {
+        String lexical = lexicalForm(token.text());
+        if (lexical.isEmpty() || !names.contains(lexical)) return false;
+        return !carriesProfanity(token.compact());
+    }
+
+    private boolean carriesProfanity(String compact) {
+        if (compact == null || compact.length() < minWordLength) return false;
+        return containsWord(exactTrie, compact) || (fuzzyHasEntries && containsWord(fuzzyTrie, compact));
+    }
+
+    private boolean containsWord(ProfanityTrie trie, String compact) {
+        for (int s = 0; s + minWordLength <= compact.length(); s++) {
+            ProfanityTrie.Node node = trie.root;
+            for (int e = s; e < compact.length(); e++) {
+                node = ProfanityTrie.getChild(node, compact.charAt(e));
+                if (node == null) break;
+                if (node.word != null) return true;
+            }
+        }
+        return false;
+    }
+
+    private void collectSafeRegions(Token token, List<int[]> regions) {
+        if (!safeTrieHasEntries) return;
+
+        String text = token.text();
+        if (text.length() < minWordLength) return;
+
+        CompactView view = CompactView.of(text, collapseRepeats);
+        String compact = view.compact;
+        if (compact.length() < minWordLength) return;
+
+        for (int s = 0; s < compact.length(); s++) {
+            ProfanityTrie.Node node = safeTrie.root;
+            for (int e = s; e < compact.length(); e++) {
+                node = ProfanityTrie.getChild(node, compact.charAt(e));
+                if (node == null) break;
+                if (node.word == null || e - s + 1 < minWordLength) continue;
+
+                int start = token.start() + view.originalStart(s);
+                int end = token.start() + view.originalEndExclusive(e + 1);
+                regions.add(new int[]{start, end});
+            }
+        }
+    }
+
+    private static boolean overlapsProtected(Match match, List<int[]> regions) {
+        if (regions.isEmpty()) return false;
+        for (int[] region : regions) {
+            if (match.start() < region[1] && region[0] < match.end()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void addShifted(List<Match> out, List<Match> found, int offset) {
+        if (offset == 0) {
+            out.addAll(found);
+            return;
+        }
+        for (Match m : found) {
+            out.add(new Match(m.start() + offset, m.end() + offset,
+                    m.dictionaryWord(), m.matchedText(), m.confidence(), m.reason()));
+        }
+    }
+
+    private List<Match> findSpacedFragmentMatches(String message, List<Token> tokens) {
+        List<Match> out = new ArrayList<>();
+        int i = 0;
+        while (i < tokens.size()) {
+            String compact = tokens.get(i).compact();
+            if (compact.isEmpty() || compact.length() > MAX_FRAGMENT_LENGTH) {
+                i++;
+                continue;
+            }
+            int j = i;
+            while (j < tokens.size()) {
+                String next = tokens.get(j).compact();
+                if (next.isEmpty() || next.length() > MAX_FRAGMENT_LENGTH) break;
+                j++;
+            }
+            if (j - i >= MIN_SPACED_TOKENS) {
+                collectFragmentRunMatches(message, tokens, i, j, out);
+            }
+            i = j == i ? i + 1 : j;
+        }
+        return out;
+    }
+
+    private void collectFragmentRunMatches(String message, List<Token> tokens, int from, int to, List<Match> out) {
+        int runLen = to - from;
+        int[] compactStart = new int[runLen];
+        int[] compactEnd = new int[runLen];
+        StringBuilder sb = new StringBuilder();
+        for (int k = 0; k < runLen; k++) {
+            compactStart[k] = sb.length();
+            sb.append(tokens.get(from + k).compact());
+            compactEnd[k] = sb.length();
+        }
+        String run = sb.toString();
+        if (run.length() < minWordLength) return;
+
+        boolean[] boundaryStart = new boolean[run.length() + 1];
+        boolean[] boundaryEnd = new boolean[run.length() + 1];
+        int[] tokenAtStart = new int[run.length() + 1];
+        int[] tokenAtEnd = new int[run.length() + 1];
+        Arrays.fill(tokenAtStart, -1);
+        Arrays.fill(tokenAtEnd, -1);
+        for (int k = 0; k < runLen; k++) {
+            boundaryStart[compactStart[k]] = true;
+            boundaryEnd[compactEnd[k]] = true;
+            tokenAtStart[compactStart[k]] = k;
+            tokenAtEnd[compactEnd[k]] = k;
+        }
+
+        for (int s = 0; s < run.length(); s++) {
+            if (!boundaryStart[s]) continue;
+
+            ProfanityTrie.Node node = exactTrie.root;
+            for (int e = s; e < run.length(); e++) {
+                node = ProfanityTrie.getChild(node, run.charAt(e));
+                if (node == null) break;
+
+                int endExclusive = e + 1;
+                if (node.word == null || endExclusive - s < minWordLength) continue;
+                if (!boundaryEnd[endExclusive]) continue;
+                if (safeExact.contains(node.word)) continue;
+
+                int tokenFrom = tokenAtStart[s];
+                int tokenTo = tokenAtEnd[endExclusive];
+                if (tokenFrom < 0 || tokenTo < 0 || tokenTo - tokenFrom + 1 < MIN_SPACED_TOKENS) continue;
+
+                // This pass catches a single word spelled out with spaces. Two shapes are legitimate:
+                //  - fully atomised, one fragment per letter ("х у й", "с у к а", "п и з д а"): the
+                //    fragment lengths sum to exactly (endExclusive - s), so tokenCount == letterCount
+                //    means every fragment is a single character — always a deliberate evasion;
+                //  - a word split into a few non-word chunks ("нах уй", "пи зда", "бл ять").
+                // What must NOT match is ordinary short words that merely abut into a dictionary
+                // word. Every such false positive leans on a function word gluing the pieces
+                // ("у род"→урод, "ах у"→аху, "иди от"→идиот, "род он ку"→подонку), so a multi-letter
+                // run that contains any function-word fragment is rejected. Fully atomised runs are
+                // always allowed, even when every fragment is a function word ("с у к а"): the only
+                // dictionary words spellable from single function-word letters (у в с к о я) are
+                // сук/сука/суки, i.e. profanity themselves.
+                int spanFrom = from + tokenFrom;
+                int spanTo = from + tokenTo + 1;
+                boolean atomised = tokenTo - tokenFrom + 1 >= endExclusive - s;
+                if (!atomised && anyFunctionWord(tokens, spanFrom, spanTo)) continue;
+
+                Token startTok = tokens.get(from + tokenFrom);
+                Token endTok = tokens.get(from + tokenTo);
+                int start = startTok.start();
+                int end = endTok.end();
+                out.add(new Match(start, end, node.word, message.substring(start, end),
+                        SPACED_FRAGMENTS_CONFIDENCE, "spaced-fragments"));
+            }
+        }
+    }
+
+    private boolean anyFunctionWord(List<Token> tokens, int fromInclusive, int toExclusive) {
+        for (int i = fromInclusive; i < toExclusive; i++) {
+            if (FUNCTION_WORDS.contains(lexicalForm(tokens.get(i).text()))) {
+                return true;
+            }
         }
         return false;
     }
@@ -310,7 +444,7 @@ public final class ProfanityEngine {
             int mapped = TextNormalizer.mapChar(startChar);
             if (mapped <= 0) continue;
 
-            TrieNode node = getChild(root, (char) mapped);
+            ProfanityTrie.Node node = ProfanityTrie.getChild(exactTrie.root, (char) mapped);
             if (node == null) continue;
 
             int lastLetterIndex = start;
@@ -337,7 +471,7 @@ public final class ProfanityEngine {
                         pos++;
                         continue;
                     }
-                    TrieNode next = getChild(node, ch);
+                    ProfanityTrie.Node next = ProfanityTrie.getChild(node, ch);
                     if (next == null) break;
                     node = next;
                     lastNorm = ch;
@@ -373,7 +507,7 @@ public final class ProfanityEngine {
                     pos = gapEnd + 1;
                     continue;
                 }
-                TrieNode next = getChild(node, nextCh);
+                ProfanityTrie.Node next = ProfanityTrie.getChild(node, nextCh);
                 if (next == null) break;
                 node = next;
                 lastNorm = nextCh;
@@ -394,7 +528,7 @@ public final class ProfanityEngine {
         int length = text.length();
 
         for (int start = 0; start < length; start++) {
-            TrieNode node = getChild(fuzzyRoot, text.charAt(start));
+            ProfanityTrie.Node node = ProfanityTrie.getChild(fuzzyTrie.root, text.charAt(start));
             if (node == null) continue;
 
             for (int i = start; i < length; ) {
@@ -406,7 +540,7 @@ public final class ProfanityEngine {
                 }
                 i++;
                 if (i >= length) break;
-                TrieNode next = getChild(node, text.charAt(i));
+                ProfanityTrie.Node next = ProfanityTrie.getChild(node, text.charAt(i));
                 if (next == null) break;
                 node = next;
             }

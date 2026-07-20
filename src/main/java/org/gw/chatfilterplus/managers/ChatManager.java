@@ -3,23 +3,24 @@ package org.gw.chatfilterplus.managers;
 import lombok.Getter;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.gw.chatfilterplus.ChatFilterPlus;
+import org.gw.chatfilterplus.managers.chat.ChatConflictDetector;
+import org.gw.chatfilterplus.managers.chat.ChatDecisionStore;
+import org.gw.chatfilterplus.managers.chat.ChatNotificationDispatcher;
 import org.gw.chatfilterplus.utils.AntiSpamResult;
 import org.gw.chatfilterplus.utils.PermissionCompat;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 @Getter
-public class ChatManager implements Listener {
+public class ChatManager implements Listener, ChatNotificationDispatcher.CapsPriorityPolicy {
 
-    private static final long DECISION_TTL_MILLIS = 3_000L;
     private static final long NOTIFICATION_DELAY_TICKS = 1L;
 
     private final ChatFilterPlus plugin;
@@ -34,59 +35,9 @@ public class ChatManager implements Listener {
     private final BlockedWordsManager blockedWordsManager;
     private final AntiSpamManager antiSpamManager;
 
-    private final Map<UUID, PendingChatDecision> pendingChatDecisions = new ConcurrentHashMap<>();
-    private final Map<UUID, PendingCommandDecision> pendingCommandDecisions = new ConcurrentHashMap<>();
-
-    private final ThreadLocal<DateTimeFormatter> dateFormatter = ThreadLocal.withInitial(
-            () -> DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    );
-
-    private static final class PendingChatDecision {
-        final String originalMessage;
-        final String finalMessage;
-        final boolean blocked;
-        final boolean modified;
-        final long createdAt;
-
-        PendingChatDecision(String originalMessage, String finalMessage, boolean blocked, boolean modified) {
-            this.originalMessage = originalMessage;
-            this.finalMessage = finalMessage;
-            this.blocked = blocked;
-            this.modified = modified;
-            this.createdAt = System.currentTimeMillis();
-        }
-
-        boolean isExpired() {
-            return System.currentTimeMillis() - createdAt > DECISION_TTL_MILLIS;
-        }
-
-        boolean matches(String current) {
-            return originalMessage.equals(current) || finalMessage.equals(current);
-        }
-    }
-
-    private static final class PendingCommandDecision {
-        final String commandLabel;
-        final String originalArgs;
-        final String finalFullMessage;
-        final boolean blocked;
-        final boolean modified;
-        final long createdAt;
-
-        PendingCommandDecision(String commandLabel, String originalArgs, String finalFullMessage,
-                               boolean blocked, boolean modified) {
-            this.commandLabel = commandLabel;
-            this.originalArgs = originalArgs;
-            this.finalFullMessage = finalFullMessage;
-            this.blocked = blocked;
-            this.modified = modified;
-            this.createdAt = System.currentTimeMillis();
-        }
-
-        boolean isExpired() {
-            return System.currentTimeMillis() - createdAt > DECISION_TTL_MILLIS;
-        }
-    }
+    private final ChatDecisionStore decisionStore;
+    private final ChatNotificationDispatcher notifications;
+    private final ChatConflictDetector conflictDetector;
 
     public ChatManager(ChatFilterPlus plugin, ConfigManager configManager, WordsManager wordsManager,
                        LinksManager linksManager, CapsManager capsManager,
@@ -106,6 +57,13 @@ public class ChatManager implements Listener {
         this.punishmentManager = punishmentManager;
         this.cacheManager = cacheManager;
         this.antiSpamManager = antiSpamManager;
+
+        this.decisionStore = new ChatDecisionStore(plugin);
+        this.decisionStore.start();
+        this.conflictDetector = new ChatConflictDetector(plugin);
+        this.notifications = new ChatNotificationDispatcher(
+                plugin, configManager, notificationManager, logCleanupManager,
+                punishmentManager, linksManager, this);
     }
 
     public void clearCache() {
@@ -114,13 +72,63 @@ public class ChatManager implements Listener {
         }
     }
 
+    public void shutdown() {
+        decisionStore.shutdown();
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        decisionStore.clearPlayer(event.getPlayer().getUniqueId());
+    }
+
+    public interface ChatEventAccess {
+        boolean isCancelled();
+
+        void setMessage(String plainMessage);
+
+        void block();
+
+        void uncancel();
+    }
+
     public void onPlayerChat(AsyncPlayerChatEvent event, boolean readOnly) {
-        if (!configManager.isCompatibilityAggressiveMode() && event.isCancelled()) {
+        onChat(event.getPlayer(), event.getMessage(), readOnly, legacyAccess(event));
+    }
+
+    public void enforcePlayerChat(AsyncPlayerChatEvent event) {
+        enforceChat(event.getPlayer(), event.getMessage(), null, legacyAccess(event));
+    }
+
+    public void verifyPlayerChat(AsyncPlayerChatEvent event, org.bukkit.event.EventPriority ourPriority) {
+        verifyChat(event.getPlayer(), event.getMessage(), event.isCancelled(),
+                AsyncPlayerChatEvent.getHandlerList().getRegisteredListeners(), ourPriority);
+    }
+
+    public void verifyChat(Player player,
+                           String actualMessage,
+                           boolean actualCancelled,
+                           org.bukkit.plugin.RegisteredListener[] listeners,
+                           org.bukkit.event.EventPriority ourPriority) {
+        if (player == null) return;
+        decisionStore.verifyChat(player.getUniqueId(), actualMessage, actualCancelled,
+                conflictDetector, listeners, ourPriority);
+    }
+
+    public void onChat(Player player, String originalMessage, boolean readOnly, ChatEventAccess access) {
+        if (access == null || player == null || originalMessage == null) return;
+
+        if (!configManager.isCompatibilityAggressiveMode() && access.isCancelled()) {
             return;
         }
 
-        Player player = event.getPlayer();
-        String originalMessage = event.getMessage();
+        if (!readOnly && decisionStore.tryReapplyExisting(
+                player.getUniqueId(),
+                originalMessage,
+                access,
+                configManager.isCompatibilityAggressiveMode())) {
+            return;
+        }
+
         final boolean[] modified = {false};
         final boolean[] blocked = {false};
         final String[] finalMessage = {originalMessage};
@@ -128,67 +136,72 @@ public class ChatManager implements Listener {
         handleMessage(player, originalMessage,
                 message -> {
                     if (!readOnly) {
-                        event.setMessage(message);
+                        access.setMessage(message);
                         finalMessage[0] = message;
                         modified[0] = true;
                     }
                 },
                 cancel -> {
                     if (!readOnly && cancel) {
-                        applyChatBlock(event);
+                        access.block();
                         blocked[0] = true;
                     }
                 });
 
         if (!readOnly) {
             if (configManager.isCompatibilityAggressiveMode() && modified[0] && !blocked[0]) {
-                event.setCancelled(false);
+                access.uncancel();
             }
-            pendingChatDecisions.put(player.getUniqueId(),
-                    new PendingChatDecision(originalMessage, finalMessage[0], blocked[0], modified[0]));
+            decisionStore.putChat(player.getUniqueId(),
+                    originalMessage, finalMessage[0], blocked[0], modified[0]);
         }
     }
 
-    public void enforcePlayerChat(AsyncPlayerChatEvent event) {
-        UUID uuid = event.getPlayer().getUniqueId();
-        PendingChatDecision decision = pendingChatDecisions.get(uuid);
-        if (decision == null || decision.isExpired()) {
-            if (decision != null) pendingChatDecisions.remove(uuid, decision);
-            return;
-        }
-
-        if (!decision.matches(event.getMessage()) && !decision.originalMessage.equals(event.getMessage())) {
-            return;
-        }
-
-        if (decision.blocked) {
-            applyChatBlock(event);
-            return;
-        }
-
-        if (decision.modified) {
-            event.setMessage(decision.finalMessage);
-            if (configManager.isCompatibilityAggressiveMode() && event.isCancelled()) {
-                event.setCancelled(false);
-            }
-        }
+    public void enforceChat(Player player, String currentMessage, String eventOriginalPlain, ChatEventAccess access) {
+        if (player == null) return;
+        decisionStore.enforceChat(
+                player.getUniqueId(),
+                currentMessage,
+                eventOriginalPlain,
+                access,
+                configManager.isCompatibilityAggressiveMode());
     }
 
-    private void applyChatBlock(AsyncPlayerChatEvent event) {
-        event.setCancelled(true);
-        try {
-            event.getRecipients().clear();
-        } catch (UnsupportedOperationException | ConcurrentModificationException ignored) {
-            try {
-                Set<Player> recipients = event.getRecipients();
-                Iterator<Player> iterator = recipients.iterator();
-                while (iterator.hasNext()) {
-                    iterator.next();
-                    iterator.remove();
+    private static ChatEventAccess legacyAccess(AsyncPlayerChatEvent event) {
+        return new ChatEventAccess() {
+            @Override
+            public boolean isCancelled() {
+                return event.isCancelled();
+            }
+
+            @Override
+            public void setMessage(String plainMessage) {
+                event.setMessage(plainMessage);
+            }
+
+            @Override
+            public void block() {
+                event.setCancelled(true);
+                try {
+                    event.getRecipients().clear();
+                } catch (UnsupportedOperationException | ConcurrentModificationException ignored) {
+                    try {
+                        Set<Player> recipients = event.getRecipients();
+                        Iterator<Player> iterator = recipients.iterator();
+                        while (iterator.hasNext()) {
+                            iterator.next();
+                            iterator.remove();
+                        }
+                    } catch (Exception ignored2) {
+                    }
                 }
-            } catch (Exception ignored2) {
             }
-        }
+
+            @Override
+            public void uncancel() {
+                event.setCancelled(false);
+            }
+        };
     }
 
     public void handleCommandMessage(Player player, String commandLabel, String originalMessage,
@@ -212,8 +225,8 @@ public class ChatManager implements Listener {
                 });
 
         String full = "/" + commandLabel + (finalArgs[0].isEmpty() ? "" : " " + finalArgs[0]);
-        pendingCommandDecisions.put(player.getUniqueId(),
-                new PendingCommandDecision(commandLabel, originalMessage, full, blocked[0], modified[0]));
+        decisionStore.putCommand(player.getUniqueId(),
+                commandLabel, originalMessage, full, blocked[0], modified[0]);
     }
 
     public void handleCommandMessage(Player player, String originalMessage,
@@ -223,27 +236,7 @@ public class ChatManager implements Listener {
     }
 
     public void enforceCommand(PlayerCommandPreprocessEvent event) {
-        UUID uuid = event.getPlayer().getUniqueId();
-        PendingCommandDecision decision = pendingCommandDecisions.get(uuid);
-        if (decision == null || decision.isExpired()) {
-            if (decision != null) pendingCommandDecisions.remove(uuid, decision);
-            return;
-        }
-
-        String current = event.getMessage();
-        if (decision.blocked) {
-            event.setCancelled(true);
-            return;
-        }
-
-        if (decision.modified && decision.finalFullMessage != null && !decision.finalFullMessage.isEmpty()) {
-            String withoutSlash = current.startsWith("/") ? current.substring(1) : current;
-            int space = withoutSlash.indexOf(' ');
-            String label = space == -1 ? withoutSlash : withoutSlash.substring(0, space);
-            if (decision.commandLabel.isEmpty() || decision.commandLabel.equalsIgnoreCase(label)) {
-                event.setMessage(decision.finalFullMessage);
-            }
-        }
+        decisionStore.enforceCommand(event);
     }
 
     private void handleMessage(Player player, String originalMessage,
@@ -262,7 +255,7 @@ public class ChatManager implements Listener {
         if (!bypassed.contains(FilterType.ANTI_SPAM)) {
             AntiSpamResult spamResult = antiSpamManager.checkSpam(player, originalMessage);
             if (spamResult != null) {
-                scheduleAfterChat(() -> sendAntiSpamNotification(player, spamResult, originalMessage));
+                scheduleAfterChat(() -> notifications.sendAntiSpamNotification(player, spamResult, originalMessage));
 
                 if (!"character-flood-first".equals(spamResult.reason)) {
                     if (cancelEvent != null) cancelEvent.accept(true);
@@ -271,13 +264,16 @@ public class ChatManager implements Listener {
             }
         }
 
-        MessageCacheManager.CachedMessage cached = cacheManager.analyzeAndCacheMessage(
+        MessageCacheManager.CachedMessage analyzed = cacheManager.analyzeAndCacheMessage(
                 originalMessage,
                 player.getUniqueId(),
                 bypassed.contains(FilterType.BAD_WORDS),
                 bypassed.contains(FilterType.LINKS),
                 bypassed.contains(FilterType.BLOCKED_WORDS),
                 bypassed.contains(FilterType.CAPS));
+
+        final MessageCacheManager.CachedMessage cached =
+                applyCapsFilterPriorityToCache(analyzed, originalMessage, player.getUniqueId(), bypassed);
 
         if (shouldBlockMessage(cached, bypassed)) {
             if (cancelEvent != null) cancelEvent.accept(true);
@@ -289,7 +285,7 @@ public class ChatManager implements Listener {
         }
 
         if (hasAnyTrigger(cached)) {
-            scheduleAfterChat(() -> sendAllNotifications(player, cached, bypassed, originalMessage));
+            scheduleAfterChat(() -> notifications.sendAllNotifications(player, cached, bypassed, originalMessage));
         }
     }
 
@@ -314,18 +310,9 @@ public class ChatManager implements Listener {
         };
     }
 
-    private boolean isActive(MessageCacheManager.CachedMessage cached, FilterType type, Set<FilterType> bypassed) {
+    @Override
+    public boolean isActive(MessageCacheManager.CachedMessage cached, FilterType type, Set<FilterType> bypassed) {
         return isTriggered(cached, type) && configManager.isFilterEnabled(type) && !bypassed.contains(type);
-    }
-
-    private List<String> detectedItems(MessageCacheManager.CachedMessage cached, FilterType type, String originalMessage) {
-        return switch (type) {
-            case BAD_WORDS -> uniqueItems(cached.getBadWords());
-            case LINKS -> uniqueItems(cached.getLinks());
-            case BLOCKED_WORDS -> uniqueItems(cached.getBlockedWords());
-            case CAPS -> List.of(originalMessage);
-            case ANTI_SPAM -> List.of(originalMessage);
-        };
     }
 
     private String determineFinalMessage(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
@@ -337,20 +324,50 @@ public class ChatManager implements Listener {
         return message;
     }
 
-    private boolean shouldApplyCapsFix(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
-        return capsYieldsTo(cached, bypassed,
+    private MessageCacheManager.CachedMessage applyCapsFilterPriorityToCache(
+            MessageCacheManager.CachedMessage cached,
+            String originalMessage,
+            java.util.UUID playerId,
+            Set<FilterType> bypassed) {
+
+        if (cached == null || !cached.isCaps() || bypassed.contains(FilterType.CAPS)) {
+            return cached;
+        }
+
+        boolean dropBad = isActive(cached, FilterType.BAD_WORDS, bypassed)
+                && "caps".equalsIgnoreCase(configManager.getCapsFilterPriorityBadwords());
+        boolean dropBlocked = isActive(cached, FilterType.BLOCKED_WORDS, bypassed)
+                && "caps".equalsIgnoreCase(configManager.getCapsFilterPriorityBlockedwords());
+
+        if (!dropBad && !dropBlocked) {
+            return cached;
+        }
+
+        return cacheManager.analyzeAndCacheMessage(
+                originalMessage,
+                playerId,
+                bypassed.contains(FilterType.BAD_WORDS) || dropBad,
+                bypassed.contains(FilterType.LINKS),
+                bypassed.contains(FilterType.BLOCKED_WORDS) || dropBlocked,
+                bypassed.contains(FilterType.CAPS));
+    }
+
+    @Override
+    public boolean shouldApplyCapsFix(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
+        return isCapsSideSelected(cached, bypassed,
                 configManager.getCapsFilterPriorityBlockedwords(),
                 configManager.getCapsFilterPriorityBadwords());
     }
 
-    private boolean shouldSendCapsPlayerNotification(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
-        return capsYieldsTo(cached, bypassed,
+    @Override
+    public boolean shouldEmitCapsNotifications(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
+        return isCapsSideSelected(cached, bypassed,
                 configManager.getCapsNotificationPriorityBlockedwords(),
                 configManager.getCapsNotificationPriorityBadwords());
     }
 
-    private boolean capsYieldsTo(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed,
-                                 String blockedWordsPriority, String badWordsPriority) {
+    private boolean isCapsSideSelected(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed,
+                                       String blockedWordsPriority, String badWordsPriority) {
         if (isActive(cached, FilterType.BLOCKED_WORDS, bypassed)) {
             return !"blockedwords".equalsIgnoreCase(blockedWordsPriority);
         }
@@ -360,42 +377,31 @@ public class ChatManager implements Listener {
         return true;
     }
 
-    private boolean shouldBlockMessage(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
-        for (FilterType type : FilterType.PRIORITY_ORDER) {
-            if (isActive(cached, type, bypassed)) {
-                return "block-and-notify".equalsIgnoreCase(configManager.getFilterMode(type));
-            }
-        }
-        return false;
+    @Override
+    public boolean isWordFilterSideSelected(FilterType type, MessageCacheManager.CachedMessage cached,
+                                            Set<FilterType> bypassed, boolean forNotifications) {
+        if (type != FilterType.BAD_WORDS && type != FilterType.BLOCKED_WORDS) return true;
+        if (!isActive(cached, FilterType.CAPS, bypassed)) return true;
+
+        String priority = type == FilterType.BLOCKED_WORDS
+                ? (forNotifications
+                    ? configManager.getCapsNotificationPriorityBlockedwords()
+                    : configManager.getCapsFilterPriorityBlockedwords())
+                : (forNotifications
+                    ? configManager.getCapsNotificationPriorityBadwords()
+                    : configManager.getCapsFilterPriorityBadwords());
+
+        return !"caps".equalsIgnoreCase(priority);
     }
 
-    private void sendAllNotifications(Player player, MessageCacheManager.CachedMessage cached,
-                                      Set<FilterType> bypassed, String originalMessage) {
-
-        if (player == null || !player.isOnline()) return;
-
-        FilterType punishmentType = null;
-        List<String> punishmentItems = null;
-
+    private boolean shouldBlockMessage(MessageCacheManager.CachedMessage cached, Set<FilterType> bypassed) {
         for (FilterType type : FilterType.PRIORITY_ORDER) {
             if (!isActive(cached, type, bypassed)) continue;
-
-            List<String> items = detectedItems(cached, type, originalMessage);
-            sendFilterNotification(type, player, items, originalMessage);
-
-            if (type == FilterType.CAPS && shouldSendCapsPlayerNotification(cached, bypassed)) {
-                notificationManager.notifyPlayer(player, FilterType.CAPS, "[CAPS]");
-            }
-
-            if (punishmentType == null) {
-                punishmentType = type;
-                punishmentItems = items;
-            }
+            if (type == FilterType.CAPS && !shouldApplyCapsFix(cached, bypassed)) continue;
+            if (!isWordFilterSideSelected(type, cached, bypassed, false)) continue;
+            return "block-and-notify".equalsIgnoreCase(configManager.getFilterMode(type));
         }
-
-        if (punishmentType != null) {
-            punishmentManager.handlePunishment(player, punishmentType, punishmentItems);
-        }
+        return false;
     }
 
     private Set<FilterType> collectBypassedFilters(Player player) {
@@ -418,73 +424,10 @@ public class ChatManager implements Listener {
         return false;
     }
 
-    private List<String> uniqueItems(List<String> items) {
-        if (items.size() <= 1) return items;
-        return new ArrayList<>(new LinkedHashSet<>(items));
-    }
-
-    private void sendFilterNotification(FilterType type, Player player, List<String> items, String originalMessage) {
-        if (player == null || !player.isOnline()) return;
-
-        plugin.log(type.getConsoleLabel() + " от &#ffff00" + player.getName() + " &f→ &#ffff00" + String.join(", ", items));
-        logToFile(player.getName(), items, type);
-
-        notificationManager.notifyAdmins(player, type, items);
-        notificationManager.notifyConsole(player, type, items);
-        notificationManager.notifyDiscord(player, type, items);
-
-        if (type != FilterType.CAPS) {
-            notificationManager.notifyPlayer(player, type, items.isEmpty() ? "" : items.get(0));
-        }
-    }
-
-    private void sendAntiSpamNotification(Player player, AntiSpamResult result, String originalMessage) {
-        if (player == null || !player.isOnline()) return;
-
-        List<String> items = List.of(originalMessage);
-
-        plugin.log(FilterType.ANTI_SPAM.getConsoleLabel() + " от &#ffff00" + player.getName() + " &f→ &#ffff00" + originalMessage);
-        logToFile(player.getName(), items, FilterType.ANTI_SPAM);
-
-        notificationManager.notifyAdmins(player, FilterType.ANTI_SPAM, items);
-        notificationManager.notifyConsole(player, FilterType.ANTI_SPAM, items);
-        notificationManager.notifyDiscord(player, FilterType.ANTI_SPAM, items);
-
-        String subPath = switch (result.reason) {
-            case "similar-message-cooldown" -> "similar-message-cooldown";
-            case "character-flood", "character-flood-first" -> "character-flood";
-            default -> "general-cooldown";
-        };
-
-        Map<String, String> placeholders = Map.of("remaining", String.valueOf(result.remainingSeconds));
-        configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
-        punishmentManager.handlePunishment(player, FilterType.ANTI_SPAM, items);
-    }
-
-    private void logToFile(String playerName, List<String> items, FilterType type) {
-        if (items.isEmpty()) return;
-        logCleanupManager.appendLog(type, buildLogMessage(playerName, items, type));
-    }
-
-    private String buildLogMessage(String playerName, List<String> items, FilterType type) {
-        String template = type.config(configManager)
-                .getString(type.logPath("message"), type.getDefaultLogTemplate());
-
-        String joined = String.join(", ", items);
-        String linksFormatted = type == FilterType.LINKS ? linksManager.getFormattedLinks(items) : joined;
-
-        return template
-                .replace("{player}", playerName)
-                .replace("{time}", dateFormatter.get().format(LocalDateTime.now()))
-                .replace("{words}", joined)
-                .replace("{links}", linksFormatted)
-                .replace("{original-message}", joined)
-                .replace("{reason}", items.get(0));
-    }
-
     public void reload() {
-        clearCache();
-        pendingChatDecisions.clear();
-        pendingCommandDecisions.clear();
+        if (cacheManager != null) {
+            cacheManager.reload();
+        }
+        decisionStore.clear();
     }
 }

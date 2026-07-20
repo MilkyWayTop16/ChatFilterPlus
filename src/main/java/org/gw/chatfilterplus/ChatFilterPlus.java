@@ -32,6 +32,16 @@ public class ChatFilterPlus extends JavaPlugin {
     private AntiSpamManager antiSpamManager;
     private WordNormalizer wordNormalizer;
     private CommandFilterListener commandFilterListener;
+    private PlayerNameRegistry playerNameRegistry;
+
+    public java.util.function.Supplier<java.util.Set<String>> protectedNameSupplier() {
+        return () -> {
+            if (playerNameRegistry == null) {
+                return java.util.Set.of();
+            }
+            return playerNameRegistry.names();
+        };
+    }
 
     @Override
     public void onEnable() {
@@ -57,6 +67,9 @@ public class ChatFilterPlus extends JavaPlugin {
         configManager.loadAllConfigs();
 
         console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aменеджеров &fи &#00FF5Aсистемы кэширования&f...");
+
+        playerNameRegistry = new PlayerNameRegistry();
+
         wordsManager = new WordsManager(this, configManager);
         wordsManager.loadWords();
 
@@ -86,6 +99,9 @@ public class ChatFilterPlus extends JavaPlugin {
         commandFilterListener = new CommandFilterListener(this, chatManager);
         Bukkit.getPluginManager().registerEvents(commandFilterListener, this);
         Bukkit.getPluginManager().registerEvents(new CommandSendListener(), this);
+        Bukkit.getPluginManager().registerEvents(chatManager, this);
+        Bukkit.getPluginManager().registerEvents(playerNameRegistry, this);
+        playerNameRegistry.refresh();
         registerChatListener();
 
         getCommand("chatfilterplus").setExecutor(new CommandsHandler(
@@ -124,6 +140,42 @@ public class ChatFilterPlus extends JavaPlugin {
         boolean ignoreCancelled = !configManager.isCompatibilityAggressiveMode();
         boolean readOnly = eventPriority == EventPriority.MONITOR;
 
+        registerLegacyChatListener(eventPriority, ignoreCancelled, readOnly);
+
+        if (isPaperAsyncChatEventPresent()) {
+            registerPaperChatListener(eventPriority, ignoreCancelled, readOnly);
+        }
+    }
+
+    private static boolean isPaperAsyncChatEventPresent() {
+        try {
+            Class.forName("io.papermc.paper.event.player.AsyncChatEvent");
+            return true;
+        } catch (ClassNotFoundException | NoClassDefFoundError e) {
+            return false;
+        }
+    }
+
+    private void registerPaperChatListener(EventPriority eventPriority,
+                                           boolean ignoreCancelled,
+                                           boolean readOnly) {
+        try {
+            Class<?> support = Class.forName("org.gw.chatfilterplus.listeners.PaperChatSupport");
+            support.getMethod(
+                            "register",
+                            org.bukkit.plugin.Plugin.class,
+                            org.gw.chatfilterplus.managers.ChatManager.class,
+                            EventPriority.class,
+                            boolean.class,
+                            boolean.class)
+                    .invoke(null, this, chatManager, eventPriority, ignoreCancelled, readOnly);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void registerLegacyChatListener(EventPriority eventPriority,
+                                            boolean ignoreCancelled,
+                                            boolean readOnly) {
         EventExecutor primary = (listener, event) -> {
             if (event instanceof AsyncPlayerChatEvent chatEvent) {
                 chatManager.onPlayerChat(chatEvent, readOnly);
@@ -151,6 +203,21 @@ public class ChatFilterPlus extends JavaPlugin {
                     chatManager,
                     EventPriority.HIGHEST,
                     enforce,
+                    this,
+                    false
+            );
+
+            EventExecutor verify = (listener, event) -> {
+                if (event instanceof AsyncPlayerChatEvent chatEvent) {
+                    chatManager.verifyPlayerChat(chatEvent, eventPriority);
+                }
+            };
+
+            Bukkit.getPluginManager().registerEvent(
+                    AsyncPlayerChatEvent.class,
+                    chatManager,
+                    EventPriority.MONITOR,
+                    verify,
                     this,
                     false
             );
@@ -185,7 +252,12 @@ public class ChatFilterPlus extends JavaPlugin {
         }
 
         HandlerList.unregisterAll(chatManager);
+        Bukkit.getPluginManager().registerEvents(chatManager, this);
         registerChatListener();
+
+        if (updateChecker != null) {
+            updateChecker.reload();
+        }
 
         return true;
     }
@@ -197,9 +269,6 @@ public class ChatFilterPlus extends JavaPlugin {
         if (!success) {
             return false;
         }
-
-        console("&#ffff00◆ ChatFilterPlus &f| Перезагрузка &#ffff00системы проверки обновлений&f...");
-        if (updateChecker != null) updateChecker.reload();
 
         return true;
     }
@@ -265,6 +334,9 @@ public class ChatFilterPlus extends JavaPlugin {
 
         console("&#00FF5A◆ ChatFilterPlus &f| Начало &#00FF5Aвыгрузки &fплагина...");
 
+        if (chatManager != null) {
+            chatManager.shutdown();
+        }
         if (logCleanupManager != null) {
             logCleanupManager.stopLogCleanupTask();
             logCleanupManager.shutdown();

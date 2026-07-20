@@ -1,10 +1,9 @@
 name: ChatFilterPlus
-version: 2.2
+version: 2.3
 main: org.gw.chatfilterplus.ChatFilterPlus
 author: vkusniy_milkyway
 api-version: '1.16'
-depend: [LuckPerms]
-softdepend: [PlaceholderAPI]
+softdepend: [LuckPerms, PlaceholderAPI]
 commands:
   chatfilterplus:
     aliases: [cfp]

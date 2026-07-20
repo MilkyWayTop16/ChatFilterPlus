@@ -22,6 +22,7 @@ public class MainConfig {
     private volatile int updatePeriodicIntervalHours;
     private volatile int cacheMaxSize;
     private volatile long cacheCleanupRetentionMillis;
+    private volatile boolean cacheCleanupEnabled;
     private volatile String compatibilityEventPriority;
     private volatile boolean compatibilityAggressiveMode;
     private volatile boolean commandFilteringEnabled;
@@ -38,6 +39,7 @@ public class MainConfig {
 
         consoleLogsEnabled = config.getBoolean("settings.logs.console.enabled", false);
         cacheMaxSize = config.getInt("settings.cache.max-size", 1000);
+        cacheCleanupEnabled = config.getBoolean("settings.cache.cleanup.enabled", true);
         cacheCleanupRetentionMillis = ConfigUtils.parseRetentionPeriod(
                 config.getString("settings.cache.cleanup.retention-period", "5m"));
         bStatsEnabled = config.getBoolean("settings.bstats.enabled", true);

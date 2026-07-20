@@ -1,42 +1,76 @@
 package org.gw.chatfilterplus.managers;
 
-import lombok.Getter;
 import org.gw.chatfilterplus.ChatFilterPlus;
 
 import java.io.File;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
-
-@Getter
 public class LinksManager {
 
     public record LinkMatch(int start, int end, String text) {
     }
 
+    private static final class LinkSettings {
+        final Pattern linkPattern;
+        final Pattern ipPattern;
+        final Pattern discordPattern;
+        final Pattern obfuscatedDomainPattern;
+        final Pattern inviteCodePattern;
+        final Set<String> normalizedDomains;
+        final String listFilterMode;
+        final Set<String> realTlds;
+        final Set<String> quickTriggers;
+        final int minDomainParts;
+        final boolean requireRealTld;
+        final boolean smartDetectionEnabled;
+        final String logSingleLinkTemplate;
+        final String logLinkTemplate;
+        final String logSeparator;
+        final String translatedReplacement;
+
+        LinkSettings(Pattern linkPattern,
+                     Pattern ipPattern,
+                     Pattern discordPattern,
+                     Pattern obfuscatedDomainPattern,
+                     Pattern inviteCodePattern,
+                     Set<String> normalizedDomains,
+                     String listFilterMode,
+                     Set<String> realTlds,
+                     Set<String> quickTriggers,
+                     int minDomainParts,
+                     boolean requireRealTld,
+                     boolean smartDetectionEnabled,
+                     String logSingleLinkTemplate,
+                     String logLinkTemplate,
+                     String logSeparator,
+                     String translatedReplacement) {
+            this.linkPattern = linkPattern;
+            this.ipPattern = ipPattern;
+            this.discordPattern = discordPattern;
+            this.obfuscatedDomainPattern = obfuscatedDomainPattern;
+            this.inviteCodePattern = inviteCodePattern;
+            this.normalizedDomains = normalizedDomains;
+            this.listFilterMode = listFilterMode;
+            this.realTlds = realTlds;
+            this.quickTriggers = quickTriggers;
+            this.minDomainParts = minDomainParts;
+            this.requireRealTld = requireRealTld;
+            this.smartDetectionEnabled = smartDetectionEnabled;
+            this.logSingleLinkTemplate = logSingleLinkTemplate;
+            this.logLinkTemplate = logLinkTemplate;
+            this.logSeparator = logSeparator;
+            this.translatedReplacement = translatedReplacement;
+        }
+    }
+
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
     private final AdaptiveAdFilter adaptiveAdFilter;
-
-    private volatile Pattern linkPattern;
-    private volatile Pattern ipPattern;
-    private volatile Pattern discordPattern;
-    private volatile Pattern obfuscatedDomainPattern;
-    private volatile Pattern inviteCodePattern;
-    private volatile Set<String> normalizedDomains;
-    private volatile String listFilterMode;
-
-    private volatile Set<String> realTlds;
-    private volatile Set<String> quickTriggers;
-    private volatile int minDomainParts;
-    private volatile boolean requireRealTld;
-    private volatile boolean smartDetectionEnabled;
-
-    private volatile String logSingleLinkTemplate;
-    private volatile String logLinkTemplate;
-    private volatile String logSeparator;
-    private volatile String translatedReplacement;
+    private final AtomicReference<LinkSettings> settingsRef = new AtomicReference<>();
 
     private static final Pattern INVISIBLE_CHARS = Pattern.compile("[\\u200B\\u200C\\u200D\\u2060\\uFEFF\\u00A0\\u1680\\u180E\\u2000-\\u200F\\u2028\\u2029\\u202F\\u205F\\u3000]+");
     private static final Pattern DOMAIN_PATTERN = Pattern.compile("[a-z0-9-]{2,}\\.[a-z0-9-]{2,}");
@@ -52,6 +86,17 @@ public class LinksManager {
 
     private static final Map<Character, String> HOMOGLYPHS = buildHomoglyphs();
 
+    // Real TLDs that are also common English words/abbreviations and are essentially never used by
+    // Russian servers as an advertised zone. They are excluded from the space-separated domain scan
+    // so ordinary English-ish phrases ("you are the best", "join our team", "watch tv") are not
+    // misread as spaced-out domains. Explicit-separator detection (server.best, team.today) is
+    // unaffected — this list only gates the whitespace scan.
+    private static final Set<String> SPACED_TLD_STOPWORDS = Set.of(
+            "me", "us", "gg", "tv", "co", "cc", "io",
+            "art", "team", "best", "today", "news", "win", "life", "live", "chat", "app",
+            "media", "page", "group", "tools", "vip", "bet", "wiki",
+            "top", "pro", "space", "world", "link", "click", "games", "host", "website");
+
     public LinksManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
         this.configManager = configManager;
@@ -61,6 +106,10 @@ public class LinksManager {
 
     public AdaptiveAdFilter getAdaptiveAdFilter() {
         return adaptiveAdFilter;
+    }
+
+    private LinkSettings settings() {
+        return settingsRef.get();
     }
 
     private static Map<Character, String> buildHomoglyphs() {
@@ -90,43 +139,110 @@ public class LinksManager {
     }
 
     private void load() {
-        loadPatterns();
-        loadSmartDetection();
-        loadDomains();
-        loadLogTemplates();
-        this.translatedReplacement = org.gw.chatfilterplus.utils.HexColors.translate(
+        settingsRef.set(buildSettings());
+    }
+
+    private static final String FALLBACK_LINK_REGEX = "(?i)[\\w\\p{L}\\-]+(?:\\.[\\w\\p{L}\\-]+){1,}";
+
+    private LinkSettings buildSettings() {
+        Pattern linkPattern = compileLinkRegex(configManager.getLinksRegex());
+
+        Pattern ipPattern = Pattern.compile(
+                "(?i)\\b\\d{1,3}(?:\\s*[\\.\\,\\-\\u2024\\u00B7]\\s*\\d{1,3}){3}(?:\\s*:\\s*\\d{2,5})?\\b");
+        Pattern discordPattern = Pattern.compile(
+                "(?i)(?:https?://)?(?:www\\.|ptb\\.|canary\\.)?(?:discord(?:app)?\\.(?:com|gg)/(?:invite|servers?)/?|discord\\.gg/)[a-z0-9-_]{2,32}");
+        // Separators between domain labels: an explicit punctuation dot/comma/slash, or a spelled-out
+        // dot alias ("dot"/"точка"/"тчк"). Bare whitespace is deliberately NOT a separator here — a
+        // run of ordinary words ("so much fun", "let me play") must not be read as a spaced-out domain.
+        String obfSep = "(?:\\s*[\\.\\,\\u2024\\u00B7/;]\\s*|\\s+(?:dot|точка|тчк)\\s+)";
+        Pattern obfuscatedDomainPattern = Pattern.compile(
+                "(?i)\\b[\\w\\p{L}][\\w\\p{L}\\-]{0,62}" + obfSep
+                        + "[\\w\\p{L}][\\w\\p{L}\\-]{0,48}" + obfSep
+                        + "[\\w\\p{L}]{2,24}\\b"
+                        + "|(?i)\\b[\\w\\p{L}][\\w\\p{L}\\-]{1,62}" + obfSep + "[\\w\\p{L}]{2,12}\\b");
+        Pattern inviteCodePattern = Pattern.compile(
+                "(?i)\\b(?:t\\.me|telegram\\.me|tg:\\/\\/join|vk\\.com|vk\\.cc|bit\\.ly|goo\\.gl|tinyurl\\.com|youtu\\.be)\\/[\\w\\-]{3,64}\\b"
+                        + "|(?i)\\b(?:dsc\\.gg|invite\\.gg)\\/[\\w\\-]{2,32}\\b");
+
+        boolean smartDetectionEnabled = configManager.getLinksConfig().getBoolean("filter.smart-detection.enabled", true);
+        Set<String> quickTriggers = toLowerCaseSet(configManager.getLinksConfig().getStringList("filter.smart-detection.quick-triggers"));
+        Set<String> realTlds = toLowerCaseSet(configManager.getLinksConfig().getStringList("filter.smart-detection.tlds"));
+        int minDomainParts = configManager.getLinksConfig().getInt("filter.smart-detection.min-domain-parts", 2);
+        boolean requireRealTld = configManager.getLinksConfig().getBoolean("filter.smart-detection.require-real-tld", true);
+
+        Set<String> normalized = new HashSet<>();
+        for (String domain : configManager.getLinksListFilterDomains()) {
+            if (domain == null || domain.trim().isEmpty()) continue;
+            String clean = extractDomain(normalizeForDetection(domain));
+            if (!clean.isEmpty()) normalized.add(clean);
+        }
+        Set<String> normalizedDomains = Set.copyOf(normalized);
+        String listFilterMode = configManager.getLinksListFilterMode().toLowerCase();
+
+        String logSingleLinkTemplate = configManager.getLinksConfig().getString(
+                "logs.file.links.links-format.single-link-template", "{link}");
+        String logLinkTemplate = configManager.getLinksConfig().getString(
+                "logs.file.links.links-format.link-template", "{link}");
+        String logSeparator = configManager.getLinksConfig().getString(
+                "logs.file.links.links-format.separator", ", ");
+        String translatedReplacement = org.gw.chatfilterplus.utils.HexColors.translate(
                 configManager.getLinksFilterReplacement());
+
+        return new LinkSettings(
+                linkPattern,
+                ipPattern,
+                discordPattern,
+                obfuscatedDomainPattern,
+                inviteCodePattern,
+                normalizedDomains,
+                listFilterMode,
+                realTlds,
+                quickTriggers,
+                minDomainParts,
+                requireRealTld,
+                smartDetectionEnabled,
+                logSingleLinkTemplate,
+                logLinkTemplate,
+                logSeparator,
+                translatedReplacement
+        );
     }
 
     public String getTranslatedReplacement() {
-        String value = translatedReplacement;
+        LinkSettings s = settings();
+        String value = s != null ? s.translatedReplacement : null;
         return value != null ? value : org.gw.chatfilterplus.utils.HexColors.translate(
                 configManager.getLinksFilterReplacement());
     }
 
-    private void loadPatterns() {
-        String regex = configManager.getLinksRegex();
-        try {
-            linkPattern = Pattern.compile(regex, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.UNICODE_CHARACTER_CLASS);
-        } catch (Exception e) {
-            plugin.console("&#FF5D00Некорректный regex ссылок в links.yml, используется стандартный: " + e.getMessage());
-            linkPattern = Pattern.compile("(?i)[\\w\\p{L}\\-]+(?:\\.[\\w\\p{L}\\-]+){1,}", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.UNICODE_CHARACTER_CLASS);
+    private Pattern compileLinkRegex(String regex) {
+        int flags = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.UNICODE_CHARACTER_CLASS;
+
+        if (regex == null || regex.trim().isEmpty()) {
+            plugin.error("В &#ffff00links.yml &fпуть &#ffff00filter.links.regex &fпустой — применён встроенный шаблон.");
+            return Pattern.compile(FALLBACK_LINK_REGEX, flags);
         }
 
-        ipPattern = Pattern.compile(
-                "(?i)\\b\\d{1,3}(?:\\s*[\\.\\,\\-\\u2024\\u00B7]\\s*\\d{1,3}){3}(?:\\s*:\\s*\\d{2,5})?\\b");
-        discordPattern = Pattern.compile(
-                "(?i)(?:https?://)?(?:www\\.|ptb\\.|canary\\.)?(?:discord(?:app)?\\.(?:com|gg)/(?:invite|servers?)/?|discord\\.gg/)[a-z0-9-_]{2,32}");
-        obfuscatedDomainPattern = Pattern.compile(
-                "(?i)\\b[\\w\\p{L}][\\w\\p{L}\\-]{0,62}"
-                        + "(?:\\s*[\\.\\,\\u2024\\u00B7/;]|\\s+(?:dot|точка|тчк)\\s+|\\s+)"
-                        + "[\\w\\p{L}][\\w\\p{L}\\-]{0,48}"
-                        + "(?:\\s*[\\.\\,\\u2024\\u00B7/;]|\\s+(?:dot|точка|тчк)\\s+|\\s+)"
-                        + "[\\w\\p{L}]{2,24}\\b"
-                        + "|(?i)\\b[\\w\\p{L}][\\w\\p{L}\\-]{1,62}\\s*[\\.\\,\\u2024\\u00B7]\\s*[\\w\\p{L}]{2,12}\\b");
-        inviteCodePattern = Pattern.compile(
-                "(?i)\\b(?:t\\.me|telegram\\.me|tg:\\/\\/join|vk\\.com|vk\\.cc|bit\\.ly|goo\\.gl|tinyurl\\.com|youtu\\.be)\\/[\\w\\-]{3,64}\\b"
-                        + "|(?i)\\b(?:dsc\\.gg|invite\\.gg)\\/[\\w\\-]{2,32}\\b");
+        try {
+            return Pattern.compile(regex, flags);
+        } catch (PatternSyntaxException e) {
+            plugin.error("Не удалось скомпилировать regex ссылок — применён встроенный шаблон.");
+            plugin.error("  файл:    &#ffff00links.yml");
+            plugin.error("  путь:    &#ffff00filter.links.regex");
+            plugin.error("  ошибка:  &#ffff00" + e.getDescription()
+                    + (e.getIndex() >= 0 ? " &f(позиция &#ffff00" + e.getIndex() + "&f)" : ""));
+            plugin.error("  шаблон:  &#ffff00" + abbreviate(regex, 160));
+            return Pattern.compile(FALLBACK_LINK_REGEX, flags);
+        } catch (Exception e) {
+            plugin.error("Не удалось скомпилировать regex ссылок (&#ffff00filter.links.regex &fв &#ffff00links.yml&f): "
+                    + e.getMessage() + " — применён встроенный шаблон.");
+            return Pattern.compile(FALLBACK_LINK_REGEX, flags);
+        }
+    }
+
+    private static String abbreviate(String text, int maxLength) {
+        if (text.length() <= maxLength) return text;
+        return text.substring(0, maxLength) + "… (+" + (text.length() - maxLength) + " симв.)";
     }
 
     private static boolean isDomainLabelChar(char c) {
@@ -136,35 +252,6 @@ public class LinksManager {
     private static boolean isHardDomainSeparator(char c) {
         return c == '.' || c == ',' || c == ';' || c == '/' || c == '\\'
                 || c == '\u2024' || c == '\u00B7' || c == '·';
-    }
-
-    private void loadDomains() {
-        Set<String> normalized = new HashSet<>();
-
-        for (String domain : configManager.getLinksListFilterDomains()) {
-            if (domain == null || domain.trim().isEmpty()) continue;
-            String clean = extractDomain(normalizeForDetection(domain));
-            if (!clean.isEmpty()) normalized.add(clean);
-        }
-
-        this.normalizedDomains = Set.copyOf(normalized);
-        this.listFilterMode = configManager.getLinksListFilterMode().toLowerCase();
-    }
-
-    private void loadSmartDetection() {
-        smartDetectionEnabled = configManager.getLinksConfig().getBoolean("filter.smart-detection.enabled", true);
-
-        this.quickTriggers = toLowerCaseSet(configManager.getLinksConfig().getStringList("filter.smart-detection.quick-triggers"));
-        this.realTlds = toLowerCaseSet(configManager.getLinksConfig().getStringList("filter.smart-detection.tlds"));
-
-        this.minDomainParts = configManager.getLinksConfig().getInt("filter.smart-detection.min-domain-parts", 2);
-        this.requireRealTld = configManager.getLinksConfig().getBoolean("filter.smart-detection.require-real-tld", true);
-    }
-
-    private void loadLogTemplates() {
-        this.logSingleLinkTemplate = configManager.getLinksConfig().getString("logs.file.links.links-format.single-link-template", "{link}");
-        this.logLinkTemplate = configManager.getLinksConfig().getString("logs.file.links.links-format.link-template", "{link}");
-        this.logSeparator = configManager.getLinksConfig().getString("logs.file.links.links-format.separator", ", ");
     }
 
     private Set<String> toLowerCaseSet(List<String> values) {
@@ -182,16 +269,20 @@ public class LinksManager {
     public List<LinkMatch> findBlockedLinks(String message, UUID playerId) {
         if (message == null || message.length() < 3) return List.of();
 
+        LinkSettings s = settings();
+        if (s == null) return List.of();
+
         List<LinkMatch> blocked = new ArrayList<>();
 
-        if (looksLikeLinkCandidate(message)) {
+        if (looksLikeLinkCandidate(message, s)) {
             List<LinkMatch> candidates = new ArrayList<>();
-            collectPatternMatches(message, ipPattern, candidates);
-            collectPatternMatches(message, discordPattern, candidates);
-            collectPatternMatches(message, inviteCodePattern, candidates);
-            collectPatternMatches(message, linkPattern, candidates);
-            collectPatternMatches(message, obfuscatedDomainPattern, candidates);
-            collectUniversalDomainCandidates(message, candidates);
+            collectPatternMatches(message, s.ipPattern, candidates);
+            collectPatternMatches(message, s.discordPattern, candidates);
+            collectPatternMatches(message, s.inviteCodePattern, candidates);
+            collectPatternMatches(message, s.linkPattern, candidates);
+            collectPatternMatches(message, s.obfuscatedDomainPattern, candidates);
+            collectUniversalDomainCandidates(message, candidates, s);
+            collectSpacedTldCandidates(message, candidates, s);
 
             if (candidates.size() > 1) {
                 candidates.sort(Comparator.comparingInt(LinkMatch::start)
@@ -201,7 +292,7 @@ public class LinksManager {
             int lastEnd = -1;
             for (LinkMatch candidate : candidates) {
                 if (candidate.start < lastEnd) continue;
-                if (!isLinkAllowed(candidate.text())) {
+                if (!isLinkAllowed(candidate.text(), s)) {
                     blocked.add(candidate);
                     lastEnd = candidate.end;
                 }
@@ -230,7 +321,7 @@ public class LinksManager {
         return blocked;
     }
 
-    private boolean looksLikeLinkCandidate(String message) {
+    private boolean looksLikeLinkCandidate(String message, LinkSettings s) {
         int n = message.length();
         for (int i = 0; i < n; i++) {
             char c = message.charAt(i);
@@ -239,7 +330,7 @@ public class LinksManager {
             }
         }
 
-        Set<String> triggers = quickTriggers;
+        Set<String> triggers = s.quickTriggers;
         if (triggers != null) {
             for (String trigger : triggers) {
                 if (trigger != null && !trigger.isEmpty() && containsIgnoreCase(message, trigger)) {
@@ -254,11 +345,11 @@ public class LinksManager {
             return true;
         }
 
-        return hasSpacedKnownTld(message);
+        return hasSpacedKnownTld(message, s);
     }
 
-    private boolean hasSpacedKnownTld(String message) {
-        Set<String> tlds = realTlds;
+    private boolean hasSpacedKnownTld(String message, LinkSettings s) {
+        Set<String> tlds = s.realTlds;
         if (tlds == null || tlds.isEmpty()) return false;
 
         int n = message.length();
@@ -326,7 +417,7 @@ public class LinksManager {
         }
     }
 
-    private void collectUniversalDomainCandidates(String message, List<LinkMatch> out) {
+    private void collectUniversalDomainCandidates(String message, List<LinkMatch> out, LinkSettings s) {
         int n = message.length();
         int i = 0;
         while (i < n) {
@@ -368,7 +459,7 @@ public class LinksManager {
             if (hardSeparators >= 1 && separators >= 1 && end - start >= 4) {
                 String candidate = message.substring(start, end);
                 String normalized = normalizeForDetection(candidate);
-                if (isValidLinkAfterNormalization(normalized)) {
+                if (isValidLinkAfterNormalization(normalized, s)) {
                     out.add(new LinkMatch(start, end, candidate));
                 }
             }
@@ -377,32 +468,124 @@ public class LinksManager {
         }
     }
 
-    private int skipDomainSeparator(String message, int index, boolean allowSpaces) {
-        if (isWordDotAlias(message, index)) {
-            int after = skipWordDotAlias(message, index);
-            while (after < message.length()
-                    && (isHardDomainSeparator(message.charAt(after)) || Character.isWhitespace(message.charAt(after)))) {
-                after++;
+    private static boolean isWrapperChar(char c) {
+        return c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}';
+    }
+
+    /**
+     * Consumes a run of separator characters between two domain labels. A run counts as a real
+     * separator when it carries a hard separator (dot/comma/slash…) or a spelled-out dot alias
+     * ("dot"/"точка"/"тчк"); bracket wrappers may surround it, so "server[.]net" and
+     * "mc(точка)ru" are recognised. Bare whitespace only separates once a hard separator has
+     * already appeared in the candidate (allowSpaces), so an ordinary run of words is never glued
+     * into a domain.
+     */
+    /**
+     * Catches domains whose labels are split by plain spaces ("play example ru", "hypixel net").
+     * These are indistinguishable from ordinary phrases by shape alone, so this pass leans on the
+     * fact that the plugin serves a Russian-speaking audience: a real domain is written in LATIN,
+     * while ordinary chat is Cyrillic. A run is only treated as a spaced domain when it ends in a
+     * real TLD and at least one preceding label is a Latin word (≥3 letters). A Cyrillic word stops
+     * the scan, so "да нет" (нет→net), "это гг", "смотрю тв", "я вип" are never misread as domains.
+     */
+    private void collectSpacedTldCandidates(String message, List<LinkMatch> out, LinkSettings s) {
+        Set<String> tlds = s.realTlds;
+        if (tlds == null || tlds.isEmpty()) return;
+
+        int n = message.length();
+        List<int[]> toks = new ArrayList<>();
+        int i = 0;
+        while (i < n) {
+            while (i < n && !isDomainLabelChar(message.charAt(i))) i++;
+            if (i >= n) break;
+            int st = i;
+            while (i < n && isDomainLabelChar(message.charAt(i))) i++;
+            toks.add(new int[]{st, i});
+        }
+
+        final int maxParts = 6;
+        for (int t = 0; t < toks.size(); t++) {
+            String last = message.substring(toks.get(t)[0], toks.get(t)[1]);
+            String lastTld = normalizeForDetection(last);
+            if (!tlds.contains(lastTld)) continue;
+            // Two-letter English homographs (me/us/gg/tv/co/cc/io) are never written space-separated
+            // as a domain, but are very common words/abbreviations, so they must not trigger the
+            // space scan ("let me", "among us", "watch tv", "wp all gg").
+            if (SPACED_TLD_STOPWORDS.contains(lastTld)) continue;
+
+            int firstSld = -1;
+            int latinLen = 0;
+            int parts = 0;
+            for (int j = t - 1; j >= 0 && parts < maxParts; j--) {
+                String tk = message.substring(toks.get(j)[0], toks.get(j)[1]);
+                if (!isAsciiDomainToken(tk)) break;
+                firstSld = j;
+                parts++;
+                latinLen += latinLetterCount(tk);
             }
-            return after;
-        }
+            // A real spaced-out domain carries a solid Latin second-level name ("funtime ru",
+            // "play world ru", "hypixel net"). Requiring ≥7 Latin letters across the labels rules
+            // out short English filler ("so much fun", "good team", "cool app") while keeping real
+            // server names. Cyrillic labels contribute nothing here, so Russian chat never qualifies.
+            if (firstSld < 0 || latinLen < 7) continue;
 
-        char c = message.charAt(index);
-        if (!isHardDomainSeparator(c) && !(allowSpaces && Character.isWhitespace(c))) {
-            return index;
+            int start = toks.get(firstSld)[0];
+            int end = toks.get(t)[1];
+            out.add(new LinkMatch(start, end, message.substring(start, end)));
         }
+    }
 
-        int sepEnd = index;
-        while (sepEnd < message.length()) {
-            char s = message.charAt(sepEnd);
-            if (isHardDomainSeparator(s) || (allowSpaces && Character.isWhitespace(s))
-                    || (isHardDomainSeparator(c) && Character.isWhitespace(s))) {
-                sepEnd++;
+    private static boolean isAsciiDomainToken(String t) {
+        if (t.isEmpty() || t.length() > 63) return false;
+        for (int k = 0; k < t.length(); k++) {
+            char c = t.charAt(k);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9') || c == '-' || c == '_';
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    private static int latinLetterCount(String t) {
+        int count = 0;
+        for (int k = 0; k < t.length(); k++) {
+            char c = Character.toLowerCase(t.charAt(k));
+            if (c >= 'a' && c <= 'z') count++;
+        }
+        return count;
+    }
+
+    private int skipDomainSeparator(String message, int index, boolean allowSpaces) {
+        int n = message.length();
+        int end = index;
+        boolean sawHardOrAlias = false;
+        boolean sawSpace = false;
+        while (end < n) {
+            char c = message.charAt(end);
+            if (isWordDotAlias(message, end)) {
+                sawHardOrAlias = true;
+                end = skipWordDotAlias(message, end);
+                continue;
+            }
+            if (isHardDomainSeparator(c)) {
+                sawHardOrAlias = true;
+                end++;
+                continue;
+            }
+            if (isWrapperChar(c)) {
+                end++;
+                continue;
+            }
+            if (Character.isWhitespace(c)) {
+                sawSpace = true;
+                end++;
                 continue;
             }
             break;
         }
-        return sepEnd;
+        if (sawHardOrAlias) return end;
+        if (allowSpaces && sawSpace) return end;
+        return index;
     }
 
     private boolean hasHardSeparatorInRange(String message, int from, int to) {
@@ -440,33 +623,43 @@ public class LinksManager {
     }
 
     public boolean isLinkAllowed(String originalLink) {
+        LinkSettings s = settings();
+        if (s == null) return true;
+        return isLinkAllowed(originalLink, s);
+    }
+
+    private boolean isLinkAllowed(String originalLink, LinkSettings s) {
         if (originalLink == null || originalLink.isEmpty()) return true;
 
-        if (ipPattern.matcher(originalLink).find()) {
-            return isAllowedByList(normalizeForDetection(originalLink));
+        if (s.ipPattern.matcher(originalLink).find()) {
+            return isAllowedByList(normalizeForDetection(originalLink), s);
         }
-        if (discordPattern.matcher(originalLink).find() || inviteCodePattern.matcher(originalLink).find()) {
-            return isAllowedByList(normalizeForDetection(originalLink));
+        if (s.discordPattern.matcher(originalLink).find() || s.inviteCodePattern.matcher(originalLink).find()) {
+            return isAllowedByList(normalizeForDetection(originalLink), s);
         }
 
         String normalized = normalizeForDetection(originalLink);
         if (normalized.isEmpty()) return true;
 
-        if (smartDetectionEnabled) {
-            if (!isValidLinkAfterNormalization(normalized) && !DOMAIN_PATTERN.matcher(normalized).find()) {
+        if (s.smartDetectionEnabled) {
+            // Trust the smart check (which enforces a real TLD when require-real-tld is on) as the
+            // sole authority. The old fallback to the generic DOMAIN_PATTERN ("xx.yy") overrode that
+            // rule and blocked any two words glued by a dot/comma ("лол.короче", "10.000",
+            // "you are the") regardless of TLD — a large source of false positives.
+            if (!isValidLinkAfterNormalization(normalized, s)) {
                 return true;
             }
         } else {
             boolean looksLikeLink = DOMAIN_PATTERN.matcher(normalized).find()
-                    || isValidLinkAfterNormalization(normalized)
+                    || isValidLinkAfterNormalization(normalized, s)
                     || (normalized.contains(".") && normalized.length() > 5);
             if (!looksLikeLink) return true;
         }
 
-        return isAllowedByList(normalized);
+        return isAllowedByList(normalized, s);
     }
 
-    private boolean isAllowedByList(String normalized) {
+    private boolean isAllowedByList(String normalized, LinkSettings s) {
         if (!configManager.isLinksListFilterEnabled()) {
             return false;
         }
@@ -474,21 +667,21 @@ public class LinksManager {
         String domain = extractDomain(normalized);
         if (domain.isEmpty()) return true;
 
-        boolean inList = normalizedDomains.contains(domain);
-        return "whitelist".equals(listFilterMode) ? inList : !inList;
+        boolean inList = s.normalizedDomains.contains(domain);
+        return "whitelist".equals(s.listFilterMode) ? inList : !inList;
     }
 
-    private boolean isValidLinkAfterNormalization(String normalized) {
+    private boolean isValidLinkAfterNormalization(String normalized, LinkSettings s) {
         if (normalized == null || normalized.isEmpty()) return false;
         String[] parts = normalized.split("\\.");
-        if (parts.length < minDomainParts) return false;
+        if (parts.length < s.minDomainParts) return false;
         for (String part : parts) {
             if (part.isEmpty() || part.length() > 63) return false;
         }
         String tld = parts[parts.length - 1].toLowerCase(Locale.ROOT);
         if (tld.length() < 2) return false;
-        if (requireRealTld) {
-            return realTlds.contains(tld);
+        if (s.requireRealTld) {
+            return s.realTlds.contains(tld);
         }
         return true;
     }
@@ -536,14 +729,17 @@ public class LinksManager {
     public String getFormattedLinks(List<String> links) {
         if (links.isEmpty()) return "";
 
+        LinkSettings s = settings();
+        if (s == null) return String.join(", ", links);
+
         if (links.size() == 1) {
-            return logSingleLinkTemplate.replace("{link}", links.get(0));
+            return s.logSingleLinkTemplate.replace("{link}", links.get(0));
         }
 
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < links.size(); i++) {
-            if (i > 0) sb.append(logSeparator);
-            sb.append(logLinkTemplate.replace("{link}", links.get(i)));
+            if (i > 0) sb.append(s.logSeparator);
+            sb.append(s.logLinkTemplate.replace("{link}", links.get(i)));
         }
         return sb.toString();
     }

@@ -97,7 +97,7 @@ public class NotificationManager {
     private void sendDiscordWebhook(String webhookUrl, String message) {
         if (webhookUrl.isEmpty() || message.isEmpty()) return;
 
-        String json = "{\"content\":\"" + escapeJson(message) + "\"}";
+        String json = "{\"content\":\"" + escapeJson(message) + "\",\"allowed_mentions\":{\"parse\":[]}}";
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(webhookUrl))
                 .timeout(Duration.ofSeconds(5))

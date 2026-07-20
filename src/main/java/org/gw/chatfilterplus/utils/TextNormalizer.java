@@ -66,8 +66,12 @@ public final class TextNormalizer {
             case 'х', 'x', 'h', '×' -> 'h';
             case 'ц' -> 'c';
             case 'ч' -> 'c';
-            case 'ш' -> 's';
-            case 'щ' -> 's';
+            // ш/щ map to 'w' (a code no Cyrillic letter uses) rather than 's'. Collapsing them
+            // into 's' is not needed for real obfuscation (leet/Latin lookalikes are) and made
+            // innocent words collide with profanity after normalization: шишка≡сиська, щука≡сука.
+            // Every ш/щ dictionary word still normalizes consistently, so detection is unaffected.
+            case 'ш' -> 'w';
+            case 'щ' -> 'w';
             case 'ю' -> 'u';
             case 'я' -> 'a';
             case 'w' -> 'w';

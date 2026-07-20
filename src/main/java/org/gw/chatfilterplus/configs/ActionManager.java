@@ -139,10 +139,28 @@ public class ActionManager {
 
         for (ParsedAction action : actions) {
             String content = action.content();
-            for (Map.Entry<String, String> e : ph.entrySet()) {
-                content = content.replace("{" + e.getKey() + "}", e.getValue());
+            boolean commandAction = "console-command".equals(action.type()) || "player-command".equals(action.type());
+
+            if (commandAction) {
+                content = PlaceholderUtil.parse(player, content);
+                for (Map.Entry<String, String> e : ph.entrySet()) {
+                    String value = e.getValue() != null ? e.getValue() : "";
+                    if (PlaceholderUtil.isPlayerControlledPlaceholder(e.getKey())) {
+                        value = PlaceholderUtil.sanitizeCommandValue(value);
+                    }
+                    content = content.replace("{" + e.getKey() + "}", value);
+                }
+            } else {
+                for (Map.Entry<String, String> e : ph.entrySet()) {
+                    String value = e.getValue() != null ? e.getValue() : "";
+                    if (PlaceholderUtil.isPlayerControlledPlaceholder(e.getKey())) {
+                        value = value.replace("%", "");
+                        value = HexColors.stripMiniMessageTags(value);
+                    }
+                    content = content.replace("{" + e.getKey() + "}", value);
+                }
+                content = PlaceholderUtil.parse(player, content);
             }
-            content = PlaceholderUtil.parse(player, content);
             executeParsedAction(player, action.type(), content);
         }
     }
@@ -281,13 +299,45 @@ public class ActionManager {
         String[] parts = content.split("\\s+");
         if (parts.length == 0) return;
         try {
-            org.bukkit.potion.PotionEffectType type = org.bukkit.potion.PotionEffectType.getByName(parts[0].toUpperCase());
+            org.bukkit.potion.PotionEffectType type = resolvePotionEffectType(parts[0]);
+            if (type == null) {
+                plugin.console("&#FF5D00Ошибка применения эффекта: " + content);
+                return;
+            }
             int duration = parts.length > 1 ? Integer.parseInt(parts[1]) * 20 : 600;
             int amplifier = parts.length > 2 ? Integer.parseInt(parts[2]) - 1 : 0;
             player.addPotionEffect(new org.bukkit.potion.PotionEffect(type, duration, amplifier));
         } catch (Exception e) {
             plugin.console("&#FF5D00Ошибка применения эффекта: " + content);
         }
+    }
+
+    private org.bukkit.potion.PotionEffectType resolvePotionEffectType(String rawName) {
+        if (rawName == null || rawName.isEmpty()) return null;
+        String name = rawName.trim();
+        org.bukkit.potion.PotionEffectType type =
+                org.bukkit.potion.PotionEffectType.getByName(name.toUpperCase(Locale.ROOT));
+        if (type != null) return type;
+
+        String key = name.toLowerCase(Locale.ROOT).replace(' ', '_');
+        if (key.contains(":")) {
+            key = key.substring(key.indexOf(':') + 1);
+        }
+        type = org.bukkit.potion.PotionEffectType.getByName(key.toUpperCase(Locale.ROOT));
+        if (type != null) return type;
+
+        try {
+            Class<?> namespacedKeyClass = Class.forName("org.bukkit.NamespacedKey");
+            Object namespacedKey = namespacedKeyClass
+                    .getMethod("minecraft", String.class)
+                    .invoke(null, key);
+            java.lang.reflect.Method getByKey = org.bukkit.potion.PotionEffectType.class
+                    .getMethod("getByKey", namespacedKeyClass);
+            Object resolved = getByKey.invoke(null, namespacedKey);
+            if (resolved instanceof org.bukkit.potion.PotionEffectType pet) return pet;
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private void executeTeleport(Player player, String content) {
@@ -310,7 +360,7 @@ public class ActionManager {
         String[] parts = content.split("\\s+");
         if (parts.length < 2) return;
         try {
-            org.bukkit.Material material = org.bukkit.Material.valueOf(parts[0].toUpperCase());
+            org.bukkit.Material material = org.bukkit.Material.valueOf(parts[0].toUpperCase(Locale.ROOT));
             int amount = Integer.parseInt(parts[1]);
             player.getInventory().addItem(new org.bukkit.inventory.ItemStack(material, amount));
         } catch (Exception e) {

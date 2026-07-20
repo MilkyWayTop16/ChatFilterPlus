@@ -1,6 +1,7 @@
 package org.gw.chatfilterplus.managers;
 
 import lombok.Getter;
+import org.bukkit.scheduler.BukkitTask;
 import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.WordNormalizer;
 
@@ -12,10 +13,12 @@ public class MessageCacheManager {
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
     private final FilterProcessor filterProcessor;
-    private final int cacheSize;
-    private final long cacheTTL;
 
-    private final Map<String, CachedMessage> messageCache;
+    private volatile int cacheSize;
+    private volatile long cacheTTL;
+    private volatile boolean cleanupEnabled;
+    private Map<String, CachedMessage> messageCache;
+    private BukkitTask cleanupTask;
 
     public static class CachedMessage {
         private final String filteredMessage;
@@ -51,33 +54,49 @@ public class MessageCacheManager {
         this.plugin = plugin;
         this.configManager = configManager;
         this.filterProcessor = new FilterProcessor(plugin, configManager, wordsManager, linksManager, capsManager, blockedWordsManager, wordNormalizer);
-        this.cacheSize = Math.max(cacheSize, 0);
-        this.cacheTTL = configManager.getCacheCleanupRetentionMillis();
-        this.messageCache = createCache(this.cacheSize);
+        applyCacheSettings(cacheSize,
+                configManager.getCacheCleanupRetentionMillis(),
+                configManager.isCacheCleanupEnabled());
+        startCleanupTaskIfNeeded();
+    }
 
-        if (this.cacheSize > 0) {
-            plugin.getServer().getScheduler().runTaskTimerAsynchronously(plugin, this::cleanCache, 20L * 60, 20L * 60);
-        }
+    private void applyCacheSettings(int size, long ttlMillis, boolean cleanup) {
+        this.cacheSize = Math.max(size, 0);
+        this.cacheTTL = Math.max(ttlMillis, 1L);
+        this.cleanupEnabled = cleanup;
+        this.messageCache = createCache(this.cacheSize);
     }
 
     private Map<String, CachedMessage> createCache(int maxSize) {
-        if (maxSize <= 0) return Collections.emptyMap();
+        if (maxSize <= 0) return Collections.synchronizedMap(new LinkedHashMap<>());
 
         int initialCapacity = Math.min(maxSize, 128) + 1;
         return Collections.synchronizedMap(new LinkedHashMap<>(initialCapacity, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, CachedMessage> eldest) {
-                return size() > maxSize;
+                return size() > MessageCacheManager.this.cacheSize;
             }
         });
     }
 
+    private void startCleanupTaskIfNeeded() {
+        if (cleanupTask != null) {
+            cleanupTask.cancel();
+            cleanupTask = null;
+        }
+        if (cacheSize > 0 && cleanupEnabled) {
+            cleanupTask = plugin.getServer().getScheduler()
+                    .runTaskTimerAsynchronously(plugin, this::cleanCache, 20L * 60, 20L * 60);
+        }
+    }
+
     private void cleanCache() {
-        if (cacheSize <= 0) return;
+        if (cacheSize <= 0 || !cleanupEnabled) return;
 
         long now = System.currentTimeMillis();
+        long ttl = cacheTTL;
         synchronized (messageCache) {
-            messageCache.entrySet().removeIf(entry -> now - entry.getValue().getTimestamp() > cacheTTL);
+            messageCache.entrySet().removeIf(entry -> now - entry.getValue().getTimestamp() > ttl);
         }
     }
 
@@ -97,14 +116,17 @@ public class MessageCacheManager {
             }
         }
 
-        if (cacheSize <= 0 || suspicion > 0) {
+        int size = cacheSize;
+        long ttl = cacheTTL;
+
+        if (size <= 0 || suspicion > 0) {
             return filterProcessor.processMessage(originalMessage, playerId, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
         }
 
         String cacheKey = buildCacheKey(originalMessage, bypassBadWords, bypassLinks, bypassBlockedWords, bypassCaps);
 
         CachedMessage cached = messageCache.get(cacheKey);
-        if (cached != null && System.currentTimeMillis() - cached.getTimestamp() < cacheTTL) {
+        if (cached != null && System.currentTimeMillis() - cached.getTimestamp() < ttl) {
             return applyAdaptiveOnCacheHit(cached, originalMessage, playerId, bypassLinks, adaptive);
         }
 
@@ -174,6 +196,11 @@ public class MessageCacheManager {
     }
 
     public void reload() {
-        clearCache();
+        applyCacheSettings(
+                configManager.getCacheMaxSize(),
+                configManager.getCacheCleanupRetentionMillis(),
+                configManager.isCacheCleanupEnabled()
+        );
+        startCleanupTaskIfNeeded();
     }
 }

@@ -67,7 +67,9 @@ public class CommandsTabCompleter implements TabCompleter {
                 completions.addAll(Arrays.asList("whitelist", "keywords", "list"));
             }
         } else if (args.length == 3 && args[0].equalsIgnoreCase("links") && args[1].equalsIgnoreCase("whitelist")) {
-            completions.addAll(Arrays.asList("add", "remove"));
+            if (sender.hasPermission("chatfilterplus.links")) {
+                completions.addAll(Arrays.asList("add", "remove"));
+            }
         } else if (args.length == 3 && args[0].equalsIgnoreCase("links") && args[1].equalsIgnoreCase("keywords")) {
             if (sender.hasPermission("chatfilterplus.links")) {
                 completions.addAll(Arrays.asList("add", "remove", "list"));
@@ -85,7 +87,9 @@ public class CommandsTabCompleter implements TabCompleter {
                 completions.addAll(Arrays.asList("whitelist", "list"));
             }
         } else if (args.length == 3 && args[0].equalsIgnoreCase("caps") && args[1].equalsIgnoreCase("whitelist")) {
-            completions.addAll(Arrays.asList("add", "remove"));
+            if (sender.hasPermission("chatfilterplus.caps")) {
+                completions.addAll(Arrays.asList("add", "remove"));
+            }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("notify")) {
             if (sender.hasPermission("chatfilterplus.notify")) {
                 completions.addAll(Arrays.asList("on", "off"));

@@ -1,0 +1,6 @@
+# артефакты запуска стендов
+*.class
+*_report.txt
+bench_*.txt
+nameshield*.txt
+cls/

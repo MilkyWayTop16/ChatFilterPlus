@@ -1,5 +1,7 @@
 package org.gw.chatfilterplus.utils;
 
+import lombok.Getter;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -18,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+@Getter
 public class UpdateChecker implements Listener {
 
     private final ChatFilterPlus plugin;
@@ -59,7 +62,7 @@ public class UpdateChecker implements Listener {
             return;
         }
 
-        checkForUpdate();
+        runCheckAsynchronously();
 
         String mode = plugin.getConfigManager().getUpdateNotifyMode();
         if ("periodic".equalsIgnoreCase(mode) || "both".equalsIgnoreCase(mode)) {
@@ -83,6 +86,10 @@ public class UpdateChecker implements Listener {
         }
     }
 
+    private void runCheckAsynchronously() {
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, this::checkForUpdate);
+    }
+
     private void checkForUpdate() {
         if (!plugin.isEnabled()) return;
 
@@ -93,56 +100,55 @@ public class UpdateChecker implements Listener {
 
         lastCheckTime = now;
 
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-            try {
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(GITHUB_API_URL))
-                        .timeout(Duration.ofSeconds(10))
-                        .header("User-Agent", "ChatFilterPlus-UpdateChecker")
-                        .header("Accept", "application/vnd.github.v3+json")
-                        .GET()
-                        .build();
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(GITHUB_API_URL))
+                    .timeout(Duration.ofSeconds(10))
+                    .header("User-Agent", "ChatFilterPlus-UpdateChecker")
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .GET()
+                    .build();
 
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-                if (response.statusCode() != 200) {
-                    if (response.statusCode() == 403 || response.statusCode() == 429) {
-                        plugin.log("Достигнут лимит запросов GitHub (Http " + response.statusCode() + ")...");
-                    } else {
-                        plugin.log("Не удалось проверить обновления (Http " + response.statusCode() + ")...");
-                    }
-                    return;
-                }
-
-                String tagName = extractTagName(response.body());
-                if (tagName == null || tagName.isEmpty()) {
-                    return;
-                }
-
-                String cleanLatest = cleanVersion(tagName);
-                String cleanCurrent = cleanVersion(plugin.getDescription().getVersion());
-
-                if (isNewerVersion(cleanLatest, cleanCurrent)) {
-                    updateAvailable = true;
-                    latestVersion = tagName;
-
-                    String mode = plugin.getConfigManager().getUpdateNotifyMode();
-                    if (!"on-join".equalsIgnoreCase(mode)) {
-                        plugin.getConfigManager().executeActions(null, "update.available", createPlaceholders());
-                    }
+            if (response.statusCode() != 200) {
+                if (response.statusCode() == 403 || response.statusCode() == 429) {
+                    plugin.log("Достигнут лимит запросов GitHub (Http " + response.statusCode() + ")...");
                 } else {
-                    updateAvailable = false;
-                    latestVersion = null;
+                    plugin.log("Не удалось проверить обновления (Http " + response.statusCode() + ")...");
                 }
-            } catch (Exception e) {
-                plugin.log("Не удалось проверить обновления: &#FF5D00" + e.getMessage());
+                return;
             }
-        });
+
+            String tagName = extractTagName(response.body());
+            if (tagName == null || tagName.isEmpty()) {
+                return;
+            }
+
+            String cleanLatest = cleanVersion(tagName);
+            String cleanCurrent = cleanVersion(plugin.getDescription().getVersion());
+
+            if (isNewerVersion(cleanLatest, cleanCurrent)) {
+                updateAvailable = true;
+                latestVersion = tagName;
+
+                String mode = plugin.getConfigManager().getUpdateNotifyMode();
+                if (!"on-join".equalsIgnoreCase(mode)) {
+                    Bukkit.getScheduler().runTask(plugin, () ->
+                            plugin.getConfigManager().executeActions(null, "update.available", createPlaceholders())
+                    );
+                }
+            } else {
+                updateAvailable = false;
+                latestVersion = null;
+            }
+        } catch (Exception e) {
+            plugin.log("Не удалось проверить обновления: &#FF5D00" + e.getMessage());
+        }
     }
 
     private String extractTagName(String json) {
         if (json == null || json.isEmpty()) return null;
-
         Matcher matcher = TAG_NAME_PATTERN.matcher(json);
         if (matcher.find()) {
             return matcher.group(1);

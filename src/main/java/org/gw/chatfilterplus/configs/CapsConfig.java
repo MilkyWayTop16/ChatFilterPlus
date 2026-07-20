@@ -37,7 +37,8 @@ public class CapsConfig {
 
         filterEnabled = config.getBoolean("filter.caps.enabled", false);
         filterMode = config.getString("filter.caps.mode", "replace-and-notify").toLowerCase();
-        minLength = Math.max(1, config.getInt("filter.caps.min-length", 5));
+        int rawMinLength = config.getInt("filter.caps.min-length", 5);
+        minLength = rawMinLength == -1 ? -1 : Math.max(1, rawMinLength);
         maxPercent = Math.max(0, Math.min(100, config.getInt("filter.caps.max-caps-percent", 70)));
         ignoreNonLetters = config.getBoolean("filter.caps.ignore-non-letters", true);
         notificationPriorityBadwords = config.getString("filter.caps.badwords-priority.notification-priority", "badwords").toLowerCase();
