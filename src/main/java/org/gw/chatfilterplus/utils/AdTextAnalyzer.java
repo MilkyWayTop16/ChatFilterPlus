@@ -6,10 +6,16 @@ import java.util.regex.Pattern;
 
 public final class AdTextAnalyzer {
 
+    // No \s in the captured class: Telegram/Discord usernames never contain spaces, and allowing
+    // one meant the greedy match swallowed everything up to 48 chars of following prose whenever a
+    // mention wasn't at the very end of the message ("@spamguy2 подпишись" captured as one "handle"
+    // "spamguy2 подпишись"). That corrupted state.knownHandles: the same real handle used again in
+    // a later message no longer matched the garbled stored value, silently breaking repeat-offender
+    // detection (the core point of the adaptive escalation).
     private static final Pattern HANDLE_PATTERN = Pattern.compile(
-            "(?i)(?:^|[^\\p{L}\\p{N}_])@([\\p{L}\\p{N}_](?:[\\p{L}\\p{N}_\\s.\\-]{2,40})[\\p{L}\\p{N}_])");
+            "(?i)(?:^|[^\\p{L}\\p{N}_])@([\\p{L}\\p{N}_](?:[\\p{L}\\p{N}_.\\-]{2,40})[\\p{L}\\p{N}_])");
     private static final Pattern LOOSE_HANDLE_PATTERN = Pattern.compile(
-            "(?i)@([\\p{L}\\p{N}_\\s.\\-]{3,48})");
+            "(?i)@([\\p{L}\\p{N}_.\\-]{3,48})");
     private static final Pattern URLISH = Pattern.compile(
             "(?i)(?:https?://|www\\.|t\\.me/|discord\\.gg/|vk\\.com/|dsc\\.gg/)");
     private static final Pattern TOKEN_SPLIT = Pattern.compile("[^\\p{L}\\p{N}@]+");

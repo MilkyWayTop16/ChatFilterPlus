@@ -6,7 +6,11 @@ import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.utils.AntiSpamResult;
 import org.gw.chatfilterplus.utils.WordNormalizer;
 
-import java.util.*;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.regex.Pattern;
@@ -16,6 +20,7 @@ public class AntiSpamManager {
     private static final int HISTORY_SIZE = 8;
     private static final long CLEANUP_INTERVAL_TICKS = 6000L;
     private static final long ENTRY_LIFETIME_MILLIS = 600_000L;
+    private static final long DEDUPE_WINDOW_MILLIS = 150L;
     private static final int MAX_LEVENSHTEIN_LENGTH_DIFF = 6;
 
     private static final int SHORT_MESSAGE_LENGTH = 8;
@@ -33,6 +38,7 @@ public class AntiSpamManager {
     private final ConfigManager configManager;
     private final Map<UUID, Deque<RecentMessage>> playerHistory = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastCharacterFlood = new ConcurrentHashMap<>();
+    private final Map<UUID, DedupeEntry> recentChecks = new ConcurrentHashMap<>();
 
     public AntiSpamManager(ChatFilterPlus plugin, ConfigManager configManager) {
         this.plugin = plugin;
@@ -41,24 +47,56 @@ public class AntiSpamManager {
     }
 
     public AntiSpamResult checkSpam(Player player, String message) {
-        if (!configManager.isAntiSpamEnabled()) return null;
+        if (!configManager.isAntiSpamEnabled() || player == null || message == null) {
+            return null;
+        }
 
         long now = System.currentTimeMillis();
-
-        AntiSpamResult floodResult = checkCharacterFlood(player, message, now);
-        if (floodResult != null) return floodResult;
-
-        Deque<RecentMessage> history = playerHistory.computeIfAbsent(player.getUniqueId(), k -> new ConcurrentLinkedDeque<>());
+        UUID uuid = player.getUniqueId();
         RecentMessage current = new RecentMessage(now, message);
 
-        AntiSpamResult result = checkSimilarMessage(history, current, message.length(), now);
-        if (result != null) return result;
+        DedupeEntry dedupe = recentChecks.get(uuid);
+        if (dedupe != null
+                && now - dedupe.time <= DEDUPE_WINDOW_MILLIS
+                && dedupe.normalized.equals(current.normalized)) {
+            return dedupe.result == null ? null : dedupe.result.asDuplicate();
+        }
 
-        result = checkGeneralCooldown(history, message, now);
-        if (result != null) return result;
+        AntiSpamResult result = checkNewPlayerChatLock(player, now);
+        if (result == null) {
+            result = checkCharacterFlood(uuid, message, now);
+        }
+        if (result == null) {
+            Deque<RecentMessage> history = playerHistory.computeIfAbsent(uuid, id -> new ConcurrentLinkedDeque<>());
+            result = checkSimilarMessage(history, current, message.length(), now);
+            if (result == null) {
+                result = checkGeneralCooldown(history, message, now);
+            }
+            if (result == null) {
+                addToHistory(history, current);
+            }
+        }
 
-        addToHistory(history, current);
-        return null;
+        recentChecks.put(uuid, new DedupeEntry(current.normalized, now, result));
+        return result;
+    }
+
+    private AntiSpamResult checkNewPlayerChatLock(Player player, long now) {
+        if (!configManager.isNewPlayerChatLockEnabled()) return null;
+
+        long required = configManager.getNewPlayerChatLockMillis();
+        if (required <= 0L) return null;
+
+        long firstPlayed = player.getFirstPlayed();
+        if (firstPlayed <= 0L) {
+            firstPlayed = now;
+        }
+
+        long elapsed = now - firstPlayed;
+        if (elapsed >= required) return null;
+
+        int remainingSeconds = (int) Math.max(1L, (required - elapsed + 999L) / 1000L);
+        return new AntiSpamResult("new-player-chat-lock", remainingSeconds);
     }
 
     private AntiSpamResult checkGeneralCooldown(Deque<RecentMessage> history, String message, long now) {
@@ -66,7 +104,9 @@ public class AntiSpamManager {
 
         if (!isLengthInRange(message.length(),
                 configManager.getGeneralCooldownMinLength(),
-                configManager.getGeneralCooldownIgnoreIfLongerThan())) return null;
+                configManager.getGeneralCooldownIgnoreIfLongerThan())) {
+            return null;
+        }
 
         RecentMessage last = history.peekLast();
         if (last == null) return null;
@@ -80,11 +120,13 @@ public class AntiSpamManager {
 
     private AntiSpamResult checkSimilarMessage(Deque<RecentMessage> history, RecentMessage current,
                                                int rawLength, long now) {
-        if (!configManager.isSimilarMessageCooldownEnabled()) return null;
+        if (!configManager.isSimilarMessageCooldownEnabled() || history.isEmpty()) return null;
 
         if (!isLengthInRange(rawLength,
                 configManager.getSimilarMessageCooldownMinLength(),
-                configManager.getSimilarMessageCooldownIgnoreIfLongerThan())) return null;
+                configManager.getSimilarMessageCooldownIgnoreIfLongerThan())) {
+            return null;
+        }
 
         for (RecentMessage previous : history) {
             if (!isSimilar(current, previous)) continue;
@@ -170,17 +212,21 @@ public class AntiSpamManager {
 
     private void addToHistory(Deque<RecentMessage> history, RecentMessage message) {
         history.addLast(message);
-        while (history.size() > HISTORY_SIZE) history.removeFirst();
+        while (history.size() > HISTORY_SIZE) {
+            history.removeFirst();
+        }
     }
 
     private void startCleanupTask() {
-        Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, this::cleanupOldEntries, CLEANUP_INTERVAL_TICKS, CLEANUP_INTERVAL_TICKS);
+        Bukkit.getScheduler().runTaskTimerAsynchronously(
+                plugin, this::cleanupOldEntries, CLEANUP_INTERVAL_TICKS, CLEANUP_INTERVAL_TICKS);
     }
 
     private void cleanupOldEntries() {
         long now = System.currentTimeMillis();
 
         lastCharacterFlood.entrySet().removeIf(entry -> now - entry.getValue() > ENTRY_LIFETIME_MILLIS);
+        recentChecks.entrySet().removeIf(entry -> now - entry.getValue().time > ENTRY_LIFETIME_MILLIS);
 
         playerHistory.entrySet().removeIf(entry -> {
             Deque<RecentMessage> history = entry.getValue();
@@ -189,7 +235,7 @@ public class AntiSpamManager {
         });
     }
 
-    private AntiSpamResult checkCharacterFlood(Player player, String message, long now) {
+    private AntiSpamResult checkCharacterFlood(UUID uuid, String message, long now) {
         if (!configManager.isCharacterFloodEnabled()) return null;
 
         boolean isFlood = hasRepeatingChars(message, configManager.getCharacterFloodMaxRepeatingChars())
@@ -197,7 +243,6 @@ public class AntiSpamManager {
 
         if (!isFlood) return null;
 
-        UUID uuid = player.getUniqueId();
         long last = lastCharacterFlood.getOrDefault(uuid, 0L);
         int cooldownSeconds = configManager.getCharacterFloodCooldownSeconds();
         long elapsed = now - last;
@@ -244,9 +289,22 @@ public class AntiSpamManager {
     public void reload() {
         playerHistory.clear();
         lastCharacterFlood.clear();
+        recentChecks.clear();
     }
 
-    private static class RecentMessage {
+    private static final class DedupeEntry {
+        final String normalized;
+        final long time;
+        final AntiSpamResult result;
+
+        DedupeEntry(String normalized, long time, AntiSpamResult result) {
+            this.normalized = normalized;
+            this.time = time;
+            this.result = result;
+        }
+    }
+
+    private static final class RecentMessage {
         final long timestamp;
         final String normalized;
         final Set<String> tokens;

@@ -2,6 +2,7 @@ package org.gw.chatfilterplus;
 
 import lombok.Getter;
 import org.bukkit.Bukkit;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
@@ -14,6 +15,9 @@ import org.gw.chatfilterplus.listeners.CommandFilterListener;
 import org.gw.chatfilterplus.listeners.CommandSendListener;
 import org.gw.chatfilterplus.managers.*;
 import org.gw.chatfilterplus.utils.*;
+
+import java.util.Set;
+import java.util.function.Supplier;
 
 @Getter
 public class ChatFilterPlus extends JavaPlugin {
@@ -34,13 +38,8 @@ public class ChatFilterPlus extends JavaPlugin {
     private CommandFilterListener commandFilterListener;
     private PlayerNameRegistry playerNameRegistry;
 
-    public java.util.function.Supplier<java.util.Set<String>> protectedNameSupplier() {
-        return () -> {
-            if (playerNameRegistry == null) {
-                return java.util.Set.of();
-            }
-            return playerNameRegistry.names();
-        };
+    public Supplier<Set<String>> protectedNameSupplier() {
+        return () -> playerNameRegistry == null ? Set.of() : playerNameRegistry.names();
     }
 
     @Override
@@ -56,74 +55,83 @@ public class ChatFilterPlus extends JavaPlugin {
             new BStats(this);
         }
 
-        long loadTime = System.currentTimeMillis() - startTime;
-        logStartupInfo(loadTime);
+        logStartupInfo(System.currentTimeMillis() - startTime);
     }
 
     private boolean initializePlugin() {
-        console("&#ffff00 ");
-        console("&#00FF5A◆ ChatFilterPlus &f| Чтение &#00FF5Aконфигурационных &fфайлов...");
-        configManager = new ConfigManager(this);
-        configManager.loadAllConfigs();
+        try {
+            console("&#ffff00 ");
+            console("&#00FF5A◆ ChatFilterPlus &f| Чтение &#00FF5Aконфигурационных &fфайлов...");
+            configManager = new ConfigManager(this);
+            configManager.loadAllConfigs();
 
-        console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aменеджеров &fи &#00FF5Aсистемы кэширования&f...");
+            console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aменеджеров &fи &#00FF5Aсистемы кэширования&f...");
 
-        playerNameRegistry = new PlayerNameRegistry();
+            playerNameRegistry = new PlayerNameRegistry();
 
-        wordsManager = new WordsManager(this, configManager);
-        wordsManager.loadWords();
+            wordsManager = new WordsManager(this, configManager);
+            wordsManager.loadWords();
 
-        capsManager = new CapsManager(this, configManager);
+            capsManager = new CapsManager(this, configManager);
 
-        linksManager = new LinksManager(this, configManager);
-        blockedWordsManager = new BlockedWordsManager(this, configManager);
-        blockedWordsManager.loadBlockedWords();
+            linksManager = new LinksManager(this, configManager, playerNameRegistry::names);
+            blockedWordsManager = new BlockedWordsManager(this, configManager);
+            blockedWordsManager.loadBlockedWords();
 
-        notificationManager = new NotificationManager(this, configManager);
-        logCleanupManager = new LogCleanupManager(this, configManager);
-        punishmentManager = new PunishmentManager(this, configManager);
+            notificationManager = new NotificationManager(this, configManager);
+            logCleanupManager = new LogCleanupManager(this, configManager);
+            punishmentManager = new PunishmentManager(this, configManager);
 
-        wordNormalizer = new WordNormalizer(this);
+            wordNormalizer = new WordNormalizer(this);
 
-        messageCacheManager = new MessageCacheManager(this, configManager, wordsManager, linksManager, capsManager,
-                blockedWordsManager, wordNormalizer, configManager.getCacheMaxSize());
+            messageCacheManager = new MessageCacheManager(this, configManager, wordsManager, linksManager, capsManager,
+                    blockedWordsManager, wordNormalizer, configManager.getCacheMaxSize());
 
-        antiSpamManager = new AntiSpamManager(this, configManager);
+            antiSpamManager = new AntiSpamManager(this, configManager);
 
-        chatManager = new ChatManager(this, configManager, wordsManager, linksManager, capsManager,
-                blockedWordsManager, notificationManager, logCleanupManager, punishmentManager,
-                messageCacheManager, antiSpamManager);
+            chatManager = new ChatManager(this, configManager, wordsManager, linksManager, capsManager,
+                    blockedWordsManager, notificationManager, logCleanupManager, punishmentManager,
+                    messageCacheManager, antiSpamManager);
 
-        console("&#00FF5A◆ ChatFilterPlus &f| Регистрация &#00FF5Aсобытий &fи &#00FF5Aкоманд...");
+            console("&#00FF5A◆ ChatFilterPlus &f| Регистрация &#00FF5Aсобытий &fи &#00FF5Aкоманд...");
 
-        commandFilterListener = new CommandFilterListener(this, chatManager);
-        Bukkit.getPluginManager().registerEvents(commandFilterListener, this);
-        Bukkit.getPluginManager().registerEvents(new CommandSendListener(), this);
-        Bukkit.getPluginManager().registerEvents(chatManager, this);
-        Bukkit.getPluginManager().registerEvents(playerNameRegistry, this);
-        playerNameRegistry.refresh();
-        registerChatListener();
+            commandFilterListener = new CommandFilterListener(this, chatManager);
+            Bukkit.getPluginManager().registerEvents(commandFilterListener, this);
+            Bukkit.getPluginManager().registerEvents(new CommandSendListener(), this);
+            Bukkit.getPluginManager().registerEvents(chatManager, this);
+            Bukkit.getPluginManager().registerEvents(playerNameRegistry, this);
+            playerNameRegistry.refresh();
+            registerChatListener();
 
-        getCommand("chatfilterplus").setExecutor(new CommandsHandler(
-                this,
-                wordsManager,
-                blockedWordsManager,
-                linksManager,
-                capsManager,
-                configManager,
-                chatManager
-        ));
-        getCommand("chatfilterplus").setTabCompleter(new CommandsTabCompleter(wordsManager, linksManager));
+            PluginCommand command = getCommand("chatfilterplus");
+            if (command == null) {
+                return false;
+            }
+            command.setExecutor(new CommandsHandler(
+                    this,
+                    wordsManager,
+                    blockedWordsManager,
+                    linksManager,
+                    capsManager,
+                    configManager,
+                    chatManager
+            ));
+            command.setTabCompleter(new CommandsTabCompleter(wordsManager, linksManager));
 
-        logCleanupManager.startLogCleanupTask();
+            logCleanupManager.startLogCleanupTask();
 
-        new LegacyPermissionMigrator(this).migrateAsyncIfNeeded();
+            new LegacyPermissionMigrator(this).migrateAsyncIfNeeded();
 
-        console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aсистемы проверки &fобновлений...");
-        updateChecker = new UpdateChecker(this);
-        Bukkit.getPluginManager().registerEvents(updateChecker, this);
+            console("&#00FF5A◆ ChatFilterPlus &f| Инициализация &#00FF5Aсистемы проверки &fобновлений...");
+            updateChecker = new UpdateChecker(this);
+            Bukkit.getPluginManager().registerEvents(updateChecker, this);
 
-        return true;
+            return true;
+        } catch (Throwable t) {
+            getLogger().severe("Ошибка инициализации ChatFilterPlus: " + t.getMessage());
+            t.printStackTrace();
+            return false;
+        }
     }
 
     private EventPriority resolveChatEventPriority() {
@@ -164,7 +172,7 @@ public class ChatFilterPlus extends JavaPlugin {
             support.getMethod(
                             "register",
                             org.bukkit.plugin.Plugin.class,
-                            org.gw.chatfilterplus.managers.ChatManager.class,
+                            ChatManager.class,
                             EventPriority.class,
                             boolean.class,
                             boolean.class)
@@ -242,6 +250,7 @@ public class ChatFilterPlus extends JavaPlugin {
 
         console("&#ffff00◆ ChatFilterPlus &f| Перезагрузка &#ffff00кэша &fи &#ffff00уведомлений&f...");
         chatManager.reload();
+        messageCacheManager.clearCache();
         notificationManager.reload();
         punishmentManager.reload();
         logCleanupManager.reload();
@@ -264,22 +273,20 @@ public class ChatFilterPlus extends JavaPlugin {
 
     public boolean reloadPlugin() {
         console("&#ffff00◆ ChatFilterPlus &f| Начало &#ffff00полной перезагрузки &fплагина...");
-
-        boolean success = reloadConfigs();
-        if (!success) {
-            return false;
-        }
-
-        return true;
+        return reloadConfigs();
     }
 
-    private void logStartupInfo(long loadTime) {
+    private void logBanner() {
         console("&#ffff00 ");
         console("&#FFFF00  █&#FFFD00▀&#FFFB00▀ &#FFF800█&#FFF600░&#FFF400█ &#FFF100▄&#FFEF00▀&#FFED00█ &#FFEA00▀&#FFE800█&#FFE600▀ &#FFE300█&#FFE100▀&#FFDF00▀ &#FFDC00█ &#FFD800█&#FFD600░&#FFD500░ &#FFD100▀&#FFCF00█&#FFCE00▀ &#FFCA00█&#FFC800▀&#FFC700▀ &#FFC300█&#FFC100▀&#FFBF00█ &#FFBC00█&#FFBA00▀&#FFB800█ &#FFB500█&#FFB300░&#FFB100░ &#FFAE00█&#FFAC00░&#FFAA00█ &#FFA700█&#FFA500▀");
         console("&#FFFF00  █&#FFFD00▄&#FFFB00▄ &#FFF800█&#FFF600▀&#FFF400█ &#FFF100█&#FFEF00▀&#FFED00█ &#FFEA00░&#FFE800█&#FFE600░ &#FFE300█&#FFE100▀&#FFDF00░ &#FFDC00█ &#FFD800█&#FFD600▄&#FFD500▄ &#FFD100░&#FFCF00█&#FFCE00░ &#FFCA00█&#FFC800█&#FFC700▄ &#FFC300█&#FFC100▀&#FFBF00▄ &#FFBC00█&#FFBA00▀&#FFB800▀ &#FFB500█&#FFB300▄&#FFB100▄ &#FFAE00█&#FFAC00▄&#FFAA00█ &#FFA700▄&#FFA500█");
         console("&#ffff00 ");
         console("&f             (By MilkyWay for everyone)");
         console("&#ffff00 ");
+    }
+
+    private void logStartupInfo(long loadTime) {
+        logBanner();
         console("&#00FF5A       ▶ &fПлагин &#00FF5Aуспешно &fзагружен и включен!");
         console("&#ffff00 ");
         console("&#ffff00               ◆ &fВерсия плагина: &#ffff00v" + getDescription().getVersion());
@@ -287,26 +294,28 @@ public class ChatFilterPlus extends JavaPlugin {
 
         console("&#ffff00               ◆ &fВключённые фильтры:");
 
+        boolean anyFilter = false;
         if (configManager.isBadWordsFilterEnabled()) {
             console("&#ffff00                  &f— &#ffff00Мат");
+            anyFilter = true;
         }
         if (configManager.isLinksFilterEnabled()) {
             console("&#ffff00                  &f— &#ffff00Ссылки");
+            anyFilter = true;
         }
         if (configManager.isCapsFilterEnabled()) {
             console("&#ffff00                  &f— &#ffff00Капс");
+            anyFilter = true;
         }
         if (configManager.isBlockedWordsFilterEnabled()) {
             console("&#ffff00                  &f— &#ffff00Запрещённые слова");
+            anyFilter = true;
         }
         if (configManager.isAntiSpamEnabled()) {
             console("&#ffff00                  &f— &#ffff00Антиспам");
+            anyFilter = true;
         }
-        if (!configManager.isBadWordsFilterEnabled() &&
-                !configManager.isLinksFilterEnabled() &&
-                !configManager.isCapsFilterEnabled() &&
-                !configManager.isBlockedWordsFilterEnabled() &&
-                !configManager.isAntiSpamEnabled()) {
+        if (!anyFilter) {
             console("&#ffff00                  &#FF5D00— Ничего не включено");
         }
 
@@ -315,12 +324,7 @@ public class ChatFilterPlus extends JavaPlugin {
     }
 
     private void logShutdownInfo(long unloadTime) {
-        console("&#ffff00 ");
-        console("&#FFFF00  █&#FFFD00▀&#FFFB00▀ &#FFF800█&#FFF600░&#FFF400█ &#FFF100▄&#FFEF00▀&#FFED00█ &#FFEA00▀&#FFE800█&#FFE600▀ &#FFE300█&#FFE100▀&#FFDF00▀ &#FFDC00█ &#FFD800█&#FFD600░&#FFD500░ &#FFD100▀&#FFCF00█&#FFCE00▀ &#FFCA00█&#FFC800▀&#FFC700▀ &#FFC300█&#FFC100▀&#FFBF00█ &#FFBC00█&#FFBA00▀&#FFB800█ &#FFB500█&#FFB300░&#FFB100░ &#FFAE00█&#FFAC00░&#FFAA00█ &#FFA700█&#FFA500▀");
-        console("&#FFFF00  █&#FFFD00▄&#FFFB00▄ &#FFF800█&#FFF600▀&#FFF400█ &#FFF100█&#FFEF00▀&#FFED00█ &#FFEA00░&#FFE800█&#FFE600░ &#FFE300█&#FFE100▀&#FFDF00░ &#FFDC00█ &#FFD800█&#FFD600▄&#FFD500▄ &#FFD100░&#FFCF00█&#FFCE00░ &#FFCA00█&#FFC800█&#FFC700▄ &#FFC300█&#FFC100▀&#FFBF00▄ &#FFBC00█&#FFBA00▀&#FFB800▀ &#FFB500█&#FFB300▄&#FFB100▄ &#FFAE00█&#FFAC00▄&#FFAA00█ &#FFA700▄&#FFA500█");
-        console("&#ffff00 ");
-        console("&f             (By MilkyWay for everyone)");
-        console("&#ffff00 ");
+        logBanner();
         console("&#FF5D00      ▶ &fПлагин &#FF5D00успешно &fвыгружен и выключен...");
         console("&#ffff00 ");
         console("&#ffff00               ◆ &fВерсия плагина: &#ffff00v" + getDescription().getVersion());
@@ -338,7 +342,6 @@ public class ChatFilterPlus extends JavaPlugin {
             chatManager.shutdown();
         }
         if (logCleanupManager != null) {
-            logCleanupManager.stopLogCleanupTask();
             logCleanupManager.shutdown();
         }
         if (messageCacheManager != null) {
@@ -354,8 +357,7 @@ public class ChatFilterPlus extends JavaPlugin {
             updateChecker.shutdown();
         }
 
-        long unloadTime = System.currentTimeMillis() - startTime;
-        logShutdownInfo(unloadTime);
+        logShutdownInfo(System.currentTimeMillis() - startTime);
     }
 
     public void console(String message) {

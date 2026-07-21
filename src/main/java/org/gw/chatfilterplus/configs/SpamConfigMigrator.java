@@ -50,18 +50,18 @@ public final class SpamConfigMigrator {
             if (legacyFile.exists()) {
                 if (!currentFile.exists()) {
                     moveFile(legacyFile, currentFile);
-                    plugin.log("Миграция из версии 2.1 в 2.2: &#ffff00anti-spam.yml &fв &#ffff00spam.yml &f(настройки все сохранены)");
+                    plugin.log("Миграция из версии 2.1 в 2.2: &#ffff00anti-spam.yml &fв &#ffff00spam.yml &f(настройки все будут сохранены)...");
                 } else {
                     mergeLegacyIntoCurrent(legacyFile, currentFile);
                     archiveFile(legacyFile, "anti-spam.yml");
-                    plugin.log("Миграция из версии 2.1 в 2.2: настройки из &#ffff00anti-spam.yml &fперенесены в &#ffff00spam.yml");
+                    plugin.log("Миграция из версии 2.1 в 2.2: настройки из &#ffff00anti-spam.yml &fперенесены в &#ffff00spam.yml&f...");
                 }
             }
 
             if (currentFile.exists()) {
                 boolean changed = transformKeysInPlace(currentFile);
                 if (changed) {
-                    plugin.log("Миграция из версии 2.1 в 2.2: ключи &#ffff00anti-spam &fв &#ffff00spam &fв spam.yml");
+                    plugin.log("Миграция из версии 2.1 в 2.2: ключи &#ffff00anti-spam &fв &#ffff00spam &fв spam.yml...");
                 }
             }
 

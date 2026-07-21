@@ -18,6 +18,7 @@ public class BlockedWordsConfig {
     private volatile boolean filterEnabled;
     private volatile String filterMode;
     private volatile String filterReplacement;
+    private volatile boolean keepEdgeLetters;
     private volatile String filterLevel;
     private volatile Set<String> exceptionPlayers;
     private volatile Set<String> exceptionGroups;
@@ -33,6 +34,7 @@ public class BlockedWordsConfig {
         filterEnabled = config.getBoolean("filter.blocked-words.enabled", true);
         filterMode = config.getString("filter.blocked-words.mode", "block-and-notify").toLowerCase();
         filterReplacement = config.getString("filter.blocked-words.replacement", "*");
+        keepEdgeLetters = config.getBoolean("filter.blocked-words.keep-edge-letters", false);
         filterLevel = config.getString("filter.blocked-words.level", "high").toLowerCase();
         exceptionPlayers = ConfigUtils.cleanStringSet(config.getStringList("filter.blocked-words.exceptions.players"));
         exceptionGroups = ConfigUtils.cleanStringSet(config.getStringList("filter.blocked-words.exceptions.groups"));

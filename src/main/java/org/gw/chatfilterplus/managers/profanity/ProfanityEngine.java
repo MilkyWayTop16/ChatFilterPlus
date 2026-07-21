@@ -368,18 +368,6 @@ public final class ProfanityEngine {
                 int tokenTo = tokenAtEnd[endExclusive];
                 if (tokenFrom < 0 || tokenTo < 0 || tokenTo - tokenFrom + 1 < MIN_SPACED_TOKENS) continue;
 
-                // This pass catches a single word spelled out with spaces. Two shapes are legitimate:
-                //  - fully atomised, one fragment per letter ("х у й", "с у к а", "п и з д а"): the
-                //    fragment lengths sum to exactly (endExclusive - s), so tokenCount == letterCount
-                //    means every fragment is a single character — always a deliberate evasion;
-                //  - a word split into a few non-word chunks ("нах уй", "пи зда", "бл ять").
-                // What must NOT match is ordinary short words that merely abut into a dictionary
-                // word. Every such false positive leans on a function word gluing the pieces
-                // ("у род"→урод, "ах у"→аху, "иди от"→идиот, "род он ку"→подонку), so a multi-letter
-                // run that contains any function-word fragment is rejected. Fully atomised runs are
-                // always allowed, even when every fragment is a function word ("с у к а"): the only
-                // dictionary words spellable from single function-word letters (у в с к о я) are
-                // сук/сука/суки, i.e. profanity themselves.
                 int spanFrom = from + tokenFrom;
                 int spanTo = from + tokenTo + 1;
                 boolean atomised = tokenTo - tokenFrom + 1 >= endExclusive - s;

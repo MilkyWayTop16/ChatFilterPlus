@@ -16,7 +16,10 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,6 +28,8 @@ public class UpdateChecker implements Listener {
 
     private final ChatFilterPlus plugin;
     private final HttpClient httpClient;
+    private final ExecutorService httpExecutor;
+    private final AtomicBoolean checkInFlight = new AtomicBoolean(false);
 
     private volatile boolean updateAvailable = false;
     private volatile String latestVersion = null;
@@ -39,8 +44,14 @@ public class UpdateChecker implements Listener {
 
     public UpdateChecker(ChatFilterPlus plugin) {
         this.plugin = plugin;
+        this.httpExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "ChatFilterPlus-UpdateChecker");
+            t.setDaemon(true);
+            return t;
+        });
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(6))
+                .executor(httpExecutor)
                 .build();
         startChecker();
     }
@@ -55,6 +66,7 @@ public class UpdateChecker implements Listener {
 
     public void shutdown() {
         cancelPeriodicTask();
+        httpExecutor.shutdownNow();
     }
 
     private void startChecker() {
@@ -62,7 +74,7 @@ public class UpdateChecker implements Listener {
             return;
         }
 
-        runCheckAsynchronously();
+        scheduleCheck();
 
         String mode = plugin.getConfigManager().getUpdateNotifyMode();
         if ("periodic".equalsIgnoreCase(mode) || "both".equalsIgnoreCase(mode)) {
@@ -76,7 +88,8 @@ public class UpdateChecker implements Listener {
         int hours = plugin.getConfigManager().getUpdatePeriodicIntervalHours();
         long delayTicks = hours * 60L * 60L * 20L;
 
-        periodicTask = plugin.getServer().getScheduler().runTaskTimerAsynchronously(plugin, this::checkForUpdate, delayTicks, delayTicks);
+        periodicTask = plugin.getServer().getScheduler().runTaskTimerAsynchronously(
+                plugin, this::scheduleCheck, delayTicks, delayTicks);
     }
 
     private void cancelPeriodicTask() {
@@ -86,64 +99,77 @@ public class UpdateChecker implements Listener {
         }
     }
 
-    private void runCheckAsynchronously() {
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, this::checkForUpdate);
-    }
-
-    private void checkForUpdate() {
+    private void scheduleCheck() {
         if (!plugin.isEnabled()) return;
 
         long now = System.currentTimeMillis();
         if (now - lastCheckTime < MIN_CHECK_INTERVAL) {
             return;
         }
+        if (!checkInFlight.compareAndSet(false, true)) {
+            return;
+        }
 
         lastCheckTime = now;
 
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(GITHUB_API_URL))
-                    .timeout(Duration.ofSeconds(10))
-                    .header("User-Agent", "ChatFilterPlus-UpdateChecker")
-                    .header("Accept", "application/vnd.github.v3+json")
-                    .GET()
-                    .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(GITHUB_API_URL))
+                .timeout(Duration.ofSeconds(10))
+                .header("User-Agent", "ChatFilterPlus-UpdateChecker")
+                .header("Accept", "application/vnd.github.v3+json")
+                .GET()
+                .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                .orTimeout(12, TimeUnit.SECONDS)
+                .whenComplete((response, error) -> {
+                    try {
+                        if (error != null) {
+                            if (plugin.isEnabled()) {
+                                plugin.log("Не удалось проверить обновления: &#FF5D00" + error.getMessage());
+                            }
+                            return;
+                        }
+                        handleResponse(response);
+                    } finally {
+                        checkInFlight.set(false);
+                    }
+                });
+    }
 
-            if (response.statusCode() != 200) {
-                if (response.statusCode() == 403 || response.statusCode() == 429) {
-                    plugin.log("Достигнут лимит запросов GitHub (Http " + response.statusCode() + ")...");
-                } else {
-                    plugin.log("Не удалось проверить обновления (Http " + response.statusCode() + ")...");
-                }
-                return;
-            }
+    private void handleResponse(HttpResponse<String> response) {
+        if (!plugin.isEnabled() || response == null) return;
 
-            String tagName = extractTagName(response.body());
-            if (tagName == null || tagName.isEmpty()) {
-                return;
-            }
-
-            String cleanLatest = cleanVersion(tagName);
-            String cleanCurrent = cleanVersion(plugin.getDescription().getVersion());
-
-            if (isNewerVersion(cleanLatest, cleanCurrent)) {
-                updateAvailable = true;
-                latestVersion = tagName;
-
-                String mode = plugin.getConfigManager().getUpdateNotifyMode();
-                if (!"on-join".equalsIgnoreCase(mode)) {
-                    Bukkit.getScheduler().runTask(plugin, () ->
-                            plugin.getConfigManager().executeActions(null, "update.available", createPlaceholders())
-                    );
-                }
+        if (response.statusCode() != 200) {
+            if (response.statusCode() == 403 || response.statusCode() == 429) {
+                plugin.log("Достигнут лимит запросов GitHub (Http " + response.statusCode() + ")...");
             } else {
-                updateAvailable = false;
-                latestVersion = null;
+                plugin.log("Не удалось проверить обновления (Http " + response.statusCode() + ")...");
             }
-        } catch (Exception e) {
-            plugin.log("Не удалось проверить обновления: &#FF5D00" + e.getMessage());
+            return;
+        }
+
+        String tagName = extractTagName(response.body());
+        if (tagName == null || tagName.isEmpty()) {
+            return;
+        }
+
+        String cleanLatest = cleanVersion(tagName);
+        String cleanCurrent = cleanVersion(plugin.getDescription().getVersion());
+
+        if (isNewerVersion(cleanLatest, cleanCurrent)) {
+            updateAvailable = true;
+            latestVersion = tagName;
+
+            String mode = plugin.getConfigManager().getUpdateNotifyMode();
+            if (!"on-join".equalsIgnoreCase(mode)) {
+                Bukkit.getScheduler().runTask(plugin, () ->
+                        plugin.getConfigManager().executeActions(null, "update.available", createPlaceholders())
+                );
+            }
+        } else {
+            updateAvailable = false;
+            latestVersion = null;
         }
     }
 

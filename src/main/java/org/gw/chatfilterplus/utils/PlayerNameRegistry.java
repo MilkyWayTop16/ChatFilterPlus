@@ -56,7 +56,12 @@ public final class PlayerNameRegistry implements Listener {
         return target.add(name);
     }
 
-    private static String normalize(String rawName) {
+    /** Same letter-only, lowercase normalization used to build {@link #names()} — callers matching
+     * arbitrary text against online player names (e.g. distinguishing an @mention of a real player
+     * from an advertised handle) must normalize with this exact method, since Minecraft usernames
+     * routinely contain digits/underscores that other normalizers (leet/homoglyph-aware) transform
+     * differently. */
+    public static String normalize(String rawName) {
         if (rawName == null) return "";
         StringBuilder sb = new StringBuilder(rawName.length());
         for (int i = 0; i < rawName.length(); i++) {

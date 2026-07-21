@@ -3,6 +3,7 @@ package org.gw.chatfilterplus.configs;
 import lombok.Getter;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.gw.chatfilterplus.ChatFilterPlus;
+import org.gw.chatfilterplus.utils.DurationFormat;
 
 import java.io.File;
 import java.util.Collections;
@@ -28,6 +29,7 @@ public class MainConfig {
     private volatile boolean commandFilteringEnabled;
     private volatile List<String> commandFilteringCommands;
     private volatile boolean adminSelfNotifyEnabled;
+    private volatile DurationFormat.Settings durationFormat;
 
     public MainConfig(ChatFilterPlus plugin) {
         this.plugin = plugin;
@@ -52,5 +54,14 @@ public class MainConfig {
         commandFilteringCommands = Collections.unmodifiableList(
                 ConfigUtils.cleanStringList(config.getStringList("settings.command-filtering.commands")));
         adminSelfNotifyEnabled = config.getBoolean("settings.admin-self-notify.enabled", true);
+        durationFormat = new DurationFormat.Settings(
+                config.getString("settings.time-format.days", "{value}д."),
+                config.getString("settings.time-format.hours", "{value}ч."),
+                config.getString("settings.time-format.minutes", "{value}м."),
+                config.getString("settings.time-format.seconds", "{value}с."),
+                config.getString("settings.time-format.separator", " "),
+                config.getBoolean("settings.time-format.hide-zero", true),
+                config.getString("settings.time-format.zero", "0с.")
+        );
     }
 }

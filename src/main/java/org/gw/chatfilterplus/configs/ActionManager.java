@@ -260,38 +260,93 @@ public class ActionManager {
     }
 
     private void executeTitle(Player player, String content, boolean isSubtitle) {
-        if (player == null) return;
+        if (player == null || content == null) return;
+
+        String[] parts = content.split(";", 4);
+        String rawText = parts[0].trim();
+        int fadeIn = parts.length > 1 ? parseIntSafe(parts[1], 10) : 10;
+        int stay = parts.length > 2 ? parseIntSafe(parts[2], 70) : 70;
+        int fadeOut = parts.length > 3 ? parseIntSafe(parts[3], 20) : 20;
+
         try {
-            String[] parts = content.split(";", 4);
-            String rawText = parts[0].trim();
-            int fadeIn = parts.length > 1 ? parseIntSafe(parts[1], 10) : 10;
-            int stay = parts.length > 2 ? parseIntSafe(parts[2], 70) : 70;
-            int fadeOut = parts.length > 3 ? parseIntSafe(parts[3], 20) : 20;
-
-            net.kyori.adventure.title.Title.Times times = net.kyori.adventure.title.Title.Times.times(
-                    java.time.Duration.ofMillis(fadeIn * 50L),
-                    java.time.Duration.ofMillis(stay * 50L),
-                    java.time.Duration.ofMillis(fadeOut * 50L)
-            );
-
-            if (rawText.contains("\n")) {
-                String[] lines = rawText.split("\n", 2);
-                player.sendTitlePart(net.kyori.adventure.title.TitlePart.TITLE, HexColors.translateToComponent(lines[0]));
-                if (lines.length > 1) {
-                    player.sendTitlePart(net.kyori.adventure.title.TitlePart.SUBTITLE, HexColors.translateToComponent(lines[1]));
-                }
-            } else {
-                net.kyori.adventure.text.Component comp = HexColors.translateToComponent(rawText);
-                if (isSubtitle) {
-                    player.sendTitlePart(net.kyori.adventure.title.TitlePart.SUBTITLE, comp);
-                } else {
-                    player.sendTitlePart(net.kyori.adventure.title.TitlePart.TITLE, comp);
-                }
+            if (sendAdventureTitle(player, rawText, isSubtitle, fadeIn, stay, fadeOut)) {
+                return;
             }
-            player.sendTitlePart(net.kyori.adventure.title.TitlePart.TIMES, times);
-        } catch (Exception e) {
+        } catch (Throwable ignored) {
+        }
+
+        try {
+            sendLegacyTitle(player, rawText, isSubtitle, fadeIn, stay, fadeOut);
+        } catch (Throwable t) {
             plugin.console("&#FF5D00Ошибка выполнения тайтла: " + content);
         }
+    }
+
+    private boolean sendAdventureTitle(Player player, String rawText, boolean isSubtitle,
+                                       int fadeIn, int stay, int fadeOut) {
+        Object times = createTitleTimes(fadeIn, stay, fadeOut);
+        if (times == null) return false;
+
+        if (rawText.contains("\n")) {
+            String[] lines = rawText.split("\n", 2);
+            player.sendTitlePart(net.kyori.adventure.title.TitlePart.TITLE,
+                    HexColors.translateToComponent(lines[0]));
+            if (lines.length > 1) {
+                player.sendTitlePart(net.kyori.adventure.title.TitlePart.SUBTITLE,
+                        HexColors.translateToComponent(lines[1]));
+            }
+        } else {
+            net.kyori.adventure.text.Component comp = HexColors.translateToComponent(rawText);
+            if (isSubtitle) {
+                player.sendTitlePart(net.kyori.adventure.title.TitlePart.SUBTITLE, comp);
+            } else {
+                player.sendTitlePart(net.kyori.adventure.title.TitlePart.TITLE, comp);
+            }
+        }
+        player.sendTitlePart(net.kyori.adventure.title.TitlePart.TIMES,
+                (net.kyori.adventure.title.Title.Times) times);
+        return true;
+    }
+
+    private static Object createTitleTimes(int fadeInTicks, int stayTicks, int fadeOutTicks) {
+        java.time.Duration in = java.time.Duration.ofMillis(Math.max(0, fadeInTicks) * 50L);
+        java.time.Duration stay = java.time.Duration.ofMillis(Math.max(0, stayTicks) * 50L);
+        java.time.Duration out = java.time.Duration.ofMillis(Math.max(0, fadeOutTicks) * 50L);
+        Class<?> timesClass = net.kyori.adventure.title.Title.Times.class;
+
+        try {
+            return timesClass.getMethod("times",
+                            java.time.Duration.class, java.time.Duration.class, java.time.Duration.class)
+                    .invoke(null, in, stay, out);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+        }
+
+        try {
+            return timesClass.getMethod("of",
+                            java.time.Duration.class, java.time.Duration.class, java.time.Duration.class)
+                    .invoke(null, in, stay, out);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+        }
+
+        return null;
+    }
+
+    private void sendLegacyTitle(Player player, String rawText, boolean isSubtitle,
+                                 int fadeIn, int stay, int fadeOut) {
+        String title = "";
+        String subtitle = "";
+        if (rawText.contains("\n")) {
+            String[] lines = rawText.split("\n", 2);
+            title = HexColors.translate(lines[0]);
+            if (lines.length > 1) {
+                subtitle = HexColors.translate(lines[1]);
+            }
+        } else if (isSubtitle) {
+            subtitle = HexColors.translate(rawText);
+        } else {
+            title = HexColors.translate(rawText);
+        }
+        player.sendTitle(title, subtitle, fadeIn, stay, fadeOut);
     }
 
     private void executePotionEffect(Player player, String content) {

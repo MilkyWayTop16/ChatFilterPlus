@@ -1,6 +1,7 @@
 package org.gw.chatfilterplus.managers;
 
 import org.gw.chatfilterplus.ChatFilterPlus;
+import org.gw.chatfilterplus.utils.DomainScriptNormalizer;
 
 import java.io.File;
 import java.util.*;
@@ -84,13 +85,6 @@ public class LinksManager {
     private static final Pattern MULTIPLE_DOTS = Pattern.compile("\\.{2,}");
     private static final Pattern EDGE_TRIM = Pattern.compile("^[-.]+|[-.]+$");
 
-    private static final Map<Character, String> HOMOGLYPHS = buildHomoglyphs();
-
-    // Real TLDs that are also common English words/abbreviations and are essentially never used by
-    // Russian servers as an advertised zone. They are excluded from the space-separated domain scan
-    // so ordinary English-ish phrases ("you are the best", "join our team", "watch tv") are not
-    // misread as spaced-out domains. Explicit-separator detection (server.best, team.today) is
-    // unaffected — this list only gates the whitespace scan.
     private static final Set<String> SPACED_TLD_STOPWORDS = Set.of(
             "me", "us", "gg", "tv", "co", "cc", "io",
             "art", "team", "best", "today", "news", "win", "life", "live", "chat", "app",
@@ -98,9 +92,14 @@ public class LinksManager {
             "top", "pro", "space", "world", "link", "click", "games", "host", "website");
 
     public LinksManager(ChatFilterPlus plugin, ConfigManager configManager) {
+        this(plugin, configManager, Set::of);
+    }
+
+    public LinksManager(ChatFilterPlus plugin, ConfigManager configManager,
+                        java.util.function.Supplier<Set<String>> onlinePlayerNames) {
         this.plugin = plugin;
         this.configManager = configManager;
-        this.adaptiveAdFilter = new AdaptiveAdFilter(plugin, configManager);
+        this.adaptiveAdFilter = new AdaptiveAdFilter(plugin, configManager, onlinePlayerNames);
         load();
     }
 
@@ -110,32 +109,6 @@ public class LinksManager {
 
     private LinkSettings settings() {
         return settingsRef.get();
-    }
-
-    private static Map<Character, String> buildHomoglyphs() {
-        Map<Character, String> map = new HashMap<>();
-
-        String smallCaps = "ᴍᴄʀᴇᴀʟʏᴡᴏᴜᴅɴᴛꜱɪʙɢʜᴋᴘꜰᴠᴢ";
-        String smallCapsLatin = "mcrealywoudntsibghkpfvz";
-        for (int i = 0; i < smallCaps.length(); i++) {
-            map.put(smallCaps.charAt(i), String.valueOf(smallCapsLatin.charAt(i)));
-        }
-
-        String cyrillic = "саеорхукмтнвгдлпфий";
-        String cyrillicLatin = "caeopxykmthvgdlnfii";
-        for (int i = 0; i < cyrillic.length(); i++) {
-            map.put(cyrillic.charAt(i), String.valueOf(cyrillicLatin.charAt(i)));
-        }
-        map.put('э', "e");
-        map.put('ю', "u");
-        map.put('я', "ya");
-        map.put('ь', "");
-        map.put('ъ', "");
-
-        for (char c = 'a'; c <= 'z'; c++) {
-            map.put((char) ('ａ' + (c - 'a')), String.valueOf(c));
-        }
-        return Map.copyOf(map);
     }
 
     private void load() {
@@ -151,9 +124,6 @@ public class LinksManager {
                 "(?i)\\b\\d{1,3}(?:\\s*[\\.\\,\\-\\u2024\\u00B7]\\s*\\d{1,3}){3}(?:\\s*:\\s*\\d{2,5})?\\b");
         Pattern discordPattern = Pattern.compile(
                 "(?i)(?:https?://)?(?:www\\.|ptb\\.|canary\\.)?(?:discord(?:app)?\\.(?:com|gg)/(?:invite|servers?)/?|discord\\.gg/)[a-z0-9-_]{2,32}");
-        // Separators between domain labels: an explicit punctuation dot/comma/slash, or a spelled-out
-        // dot alias ("dot"/"точка"/"тчк"). Bare whitespace is deliberately NOT a separator here — a
-        // run of ordinary words ("so much fun", "let me play") must not be read as a spaced-out domain.
         String obfSep = "(?:\\s*[\\.\\,\\u2024\\u00B7/;]\\s*|\\s+(?:dot|точка|тчк)\\s+)";
         Pattern obfuscatedDomainPattern = Pattern.compile(
                 "(?i)\\b[\\w\\p{L}][\\w\\p{L}\\-]{0,62}" + obfSep
@@ -472,22 +442,6 @@ public class LinksManager {
         return c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}';
     }
 
-    /**
-     * Consumes a run of separator characters between two domain labels. A run counts as a real
-     * separator when it carries a hard separator (dot/comma/slash…) or a spelled-out dot alias
-     * ("dot"/"точка"/"тчк"); bracket wrappers may surround it, so "server[.]net" and
-     * "mc(точка)ru" are recognised. Bare whitespace only separates once a hard separator has
-     * already appeared in the candidate (allowSpaces), so an ordinary run of words is never glued
-     * into a domain.
-     */
-    /**
-     * Catches domains whose labels are split by plain spaces ("play example ru", "hypixel net").
-     * These are indistinguishable from ordinary phrases by shape alone, so this pass leans on the
-     * fact that the plugin serves a Russian-speaking audience: a real domain is written in LATIN,
-     * while ordinary chat is Cyrillic. A run is only treated as a spaced domain when it ends in a
-     * real TLD and at least one preceding label is a Latin word (≥3 letters). A Cyrillic word stops
-     * the scan, so "да нет" (нет→net), "это гг", "смотрю тв", "я вип" are never misread as domains.
-     */
     private void collectSpacedTldCandidates(String message, List<LinkMatch> out, LinkSettings s) {
         Set<String> tlds = s.realTlds;
         if (tlds == null || tlds.isEmpty()) return;
@@ -508,9 +462,6 @@ public class LinksManager {
             String last = message.substring(toks.get(t)[0], toks.get(t)[1]);
             String lastTld = normalizeForDetection(last);
             if (!tlds.contains(lastTld)) continue;
-            // Two-letter English homographs (me/us/gg/tv/co/cc/io) are never written space-separated
-            // as a domain, but are very common words/abbreviations, so they must not trigger the
-            // space scan ("let me", "among us", "watch tv", "wp all gg").
             if (SPACED_TLD_STOPWORDS.contains(lastTld)) continue;
 
             int firstSld = -1;
@@ -518,15 +469,16 @@ public class LinksManager {
             int parts = 0;
             for (int j = t - 1; j >= 0 && parts < maxParts; j--) {
                 String tk = message.substring(toks.get(j)[0], toks.get(j)[1]);
-                if (!isAsciiDomainToken(tk)) break;
+                if (!isAcceptableDomainToken(tk)) break;
                 firstSld = j;
                 parts++;
-                latinLen += latinLetterCount(tk);
+                // Count only genuine Latin letters of the raw token. A domain's second-level name is
+                // written in Latin; ordinary Russian words are Cyrillic and must contribute nothing,
+                // otherwise "вот это да net" / "это все там com" (a Latin TLD homograph among Cyrillic
+                // fillers) would be read as a spaced-out domain. Mixed homoglyph names ("рeаllуwоrld")
+                // still count their Latin characters, so genuine obfuscated domains stay covered.
+                latinLen += DomainScriptNormalizer.latinLetterCount(tk);
             }
-            // A real spaced-out domain carries a solid Latin second-level name ("funtime ru",
-            // "play world ru", "hypixel net"). Requiring ≥7 Latin letters across the labels rules
-            // out short English filler ("so much fun", "good team", "cool app") while keeping real
-            // server names. Cyrillic labels contribute nothing here, so Russian chat never qualifies.
             if (firstSld < 0 || latinLen < 7) continue;
 
             int start = toks.get(firstSld)[0];
@@ -535,24 +487,8 @@ public class LinksManager {
         }
     }
 
-    private static boolean isAsciiDomainToken(String t) {
-        if (t.isEmpty() || t.length() > 63) return false;
-        for (int k = 0; k < t.length(); k++) {
-            char c = t.charAt(k);
-            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-                    || (c >= '0' && c <= '9') || c == '-' || c == '_';
-            if (!ok) return false;
-        }
-        return true;
-    }
-
-    private static int latinLetterCount(String t) {
-        int count = 0;
-        for (int k = 0; k < t.length(); k++) {
-            char c = Character.toLowerCase(t.charAt(k));
-            if (c >= 'a' && c <= 'z') count++;
-        }
-        return count;
+    private static boolean isAcceptableDomainToken(String t) {
+        return DomainScriptNormalizer.isDomainTokenAfterNorm(t);
     }
 
     private int skipDomainSeparator(String message, int index, boolean allowSpaces) {
@@ -642,10 +578,6 @@ public class LinksManager {
         if (normalized.isEmpty()) return true;
 
         if (s.smartDetectionEnabled) {
-            // Trust the smart check (which enforces a real TLD when require-real-tld is on) as the
-            // sole authority. The old fallback to the generic DOMAIN_PATTERN ("xx.yy") overrode that
-            // rule and blocked any two words glued by a dot/comma ("лол.короче", "10.000",
-            // "you are the") regardless of TLD — a large source of false positives.
             if (!isValidLinkAfterNormalization(normalized, s)) {
                 return true;
             }
@@ -697,7 +629,8 @@ public class LinksManager {
         cleaned = MULTIPLE_DOTS.matcher(cleaned).replaceAll(".");
         cleaned = EDGE_TRIM.matcher(cleaned).replaceAll("");
 
-        return normalizeHomoglyphs(cleaned.toLowerCase());
+        String latin = DomainScriptNormalizer.mapHomoglyphs(cleaned.toLowerCase(Locale.ROOT));
+        return DomainScriptNormalizer.applyTldAliases(latin);
     }
 
     private String stripPath(String text) {
@@ -706,20 +639,6 @@ public class LinksManager {
             if (c == '/' || c == '?' || c == '#') return text.substring(0, i);
         }
         return text;
-    }
-
-    private String normalizeHomoglyphs(String lowerCased) {
-        StringBuilder result = new StringBuilder(lowerCased.length());
-        for (int i = 0; i < lowerCased.length(); i++) {
-            char c = lowerCased.charAt(i);
-            String replacement = HOMOGLYPHS.get(c);
-            if (replacement == null) {
-                result.append(c);
-            } else {
-                result.append(replacement);
-            }
-        }
-        return result.toString();
     }
 
     private String extractDomain(String normalized) {

@@ -121,6 +121,10 @@ public class ChatManager implements Listener, ChatNotificationDispatcher.CapsPri
             return;
         }
 
+        if (!readOnly && blockIfAntiSpam(player, originalMessage, access)) {
+            return;
+        }
+
         if (!readOnly && decisionStore.tryReapplyExisting(
                 player.getUniqueId(),
                 originalMessage,
@@ -133,7 +137,7 @@ public class ChatManager implements Listener, ChatNotificationDispatcher.CapsPri
         final boolean[] blocked = {false};
         final String[] finalMessage = {originalMessage};
 
-        handleMessage(player, originalMessage,
+        handleMessage(player, originalMessage, false,
                 message -> {
                     if (!readOnly) {
                         access.setMessage(message);
@@ -155,6 +159,49 @@ public class ChatManager implements Listener, ChatNotificationDispatcher.CapsPri
             decisionStore.putChat(player.getUniqueId(),
                     originalMessage, finalMessage[0], blocked[0], modified[0]);
         }
+    }
+
+    private boolean blockIfAntiSpam(Player player, String originalMessage, ChatEventAccess access) {
+        Set<FilterType> bypassed = collectBypassedFilters(player);
+        if (bypassed.contains(FilterType.ANTI_SPAM)) {
+            return false;
+        }
+
+        AntiSpamResult spamResult = antiSpamManager.checkSpam(player, originalMessage);
+        if (spamResult == null) {
+            return false;
+        }
+
+        if (!spamResult.duplicateEvent) {
+            scheduleAfterChat(() -> notifications.sendAntiSpamNotification(player, spamResult, originalMessage));
+        }
+
+        if ("character-flood-first".equals(spamResult.reason)) {
+            return false;
+        }
+
+        if (!spamResult.duplicateEvent) {
+            scheduleContentFilterNotifications(player, originalMessage, bypassed);
+        }
+
+        access.block();
+        return true;
+    }
+
+    private void scheduleContentFilterNotifications(Player player, String originalMessage, Set<FilterType> bypassed) {
+        MessageCacheManager.CachedMessage analyzed = cacheManager.analyzeAndCacheMessage(
+                originalMessage,
+                player.getUniqueId(),
+                bypassed.contains(FilterType.BAD_WORDS),
+                bypassed.contains(FilterType.LINKS),
+                bypassed.contains(FilterType.BLOCKED_WORDS),
+                bypassed.contains(FilterType.CAPS));
+        MessageCacheManager.CachedMessage cached =
+                applyCapsFilterPriorityToCache(analyzed, originalMessage, player.getUniqueId(), bypassed);
+        if (!hasAnyTrigger(cached)) {
+            return;
+        }
+        scheduleAfterChat(() -> notifications.sendFilterNotificationsOnly(player, cached, bypassed, originalMessage));
     }
 
     public void enforceChat(Player player, String currentMessage, String eventOriginalPlain, ChatEventAccess access) {
@@ -211,7 +258,7 @@ public class ChatManager implements Listener, ChatNotificationDispatcher.CapsPri
         final boolean[] modified = {false};
         final String[] finalArgs = {originalMessage};
 
-        handleMessage(player, originalMessage,
+        handleMessage(player, originalMessage, true,
                 message -> {
                     setFinalMessage.accept(message);
                     finalArgs[0] = message;
@@ -239,7 +286,7 @@ public class ChatManager implements Listener, ChatNotificationDispatcher.CapsPri
         decisionStore.enforceCommand(event);
     }
 
-    private void handleMessage(Player player, String originalMessage,
+    private void handleMessage(Player player, String originalMessage, boolean checkAntiSpam,
                                Consumer<String> setFinalMessage,
                                Consumer<Boolean> cancelEvent) {
 
@@ -252,12 +299,17 @@ public class ChatManager implements Listener, ChatNotificationDispatcher.CapsPri
             return;
         }
 
-        if (!bypassed.contains(FilterType.ANTI_SPAM)) {
+        if (checkAntiSpam && !bypassed.contains(FilterType.ANTI_SPAM)) {
             AntiSpamResult spamResult = antiSpamManager.checkSpam(player, originalMessage);
             if (spamResult != null) {
-                scheduleAfterChat(() -> notifications.sendAntiSpamNotification(player, spamResult, originalMessage));
+                if (!spamResult.duplicateEvent) {
+                    scheduleAfterChat(() -> notifications.sendAntiSpamNotification(player, spamResult, originalMessage));
+                }
 
                 if (!"character-flood-first".equals(spamResult.reason)) {
+                    if (!spamResult.duplicateEvent) {
+                        scheduleContentFilterNotifications(player, originalMessage, bypassed);
+                    }
                     if (cancelEvent != null) cancelEvent.accept(true);
                     return;
                 }

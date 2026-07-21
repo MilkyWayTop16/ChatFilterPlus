@@ -19,6 +19,7 @@ public class BadWordsConfig {
     private volatile String filterMode;
     private volatile String filterLevel;
     private volatile String filterReplacement;
+    private volatile boolean keepEdgeLetters;
     private volatile boolean detectEnglishLookalikes;
     private volatile Set<String> exceptionPlayers;
     private volatile Set<String> exceptionGroups;
@@ -35,6 +36,7 @@ public class BadWordsConfig {
         filterMode = config.getString("filter.bad-words.mode", "send-and-notify").toLowerCase();
         filterLevel = config.getString("filter.bad-words.level", "high").toLowerCase();
         filterReplacement = config.getString("filter.bad-words.replacement", "*");
+        keepEdgeLetters = config.getBoolean("filter.bad-words.keep-edge-letters", true);
         detectEnglishLookalikes = config.getBoolean("filter.bad-words.detect-english-lookalikes", true);
         exceptionPlayers = ConfigUtils.cleanStringSet(config.getStringList("filter.bad-words.exceptions.players"));
         exceptionGroups = ConfigUtils.cleanStringSet(config.getStringList("filter.bad-words.exceptions.groups"));

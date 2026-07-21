@@ -48,7 +48,7 @@ public class FilterProcessor {
                     filteredMessage,
                     blockedWordsManager.getEngine(),
                     configManager.getBlockedWordsFilterReplacement(),
-                    false
+                    configManager.isBlockedWordsKeepEdgeLetters()
             );
             filteredMessage = blockedResult.message();
             blockedWords = blockedResult.foundWords();
@@ -59,7 +59,7 @@ public class FilterProcessor {
                     filteredMessage,
                     wordsManager.getEngine(),
                     configManager.getBadWordsFilterReplacement(),
-                    true
+                    configManager.isBadWordsKeepEdgeLetters()
             );
             filteredMessage = badResult.message();
             badWords = badResult.foundWords();
@@ -92,7 +92,7 @@ public class FilterProcessor {
     private EngineResult applyEngineFilter(String message,
                                            ProfanityEngine engine,
                                            String replacement,
-                                           boolean dynamicStars) {
+                                           boolean keepEdgeLetters) {
         if (engine == null || engine.isEmpty() || message.length() < 2) {
             return new EngineResult(message, Collections.emptyList());
         }
@@ -102,6 +102,7 @@ public class FilterProcessor {
             return new EngineResult(message, Collections.emptyList());
         }
 
+        String mask = (replacement == null || replacement.isEmpty()) ? "*" : replacement;
         List<String> foundWords = new ArrayList<>(matches.size());
         StringBuilder result = new StringBuilder(message);
         boolean logReasons = configManager.isConsoleLogsEnabled();
@@ -115,14 +116,8 @@ public class FilterProcessor {
                         + " &fconf=&#ffff00" + match.confidence()
                         + " &freason=&#ffff00" + match.reason());
             }
-            String repl;
-            if ("*".equals(replacement)) {
-                repl = dynamicStars
-                        ? generateDynamicReplacement(match.matchedText())
-                        : "*".repeat(Math.max(1, match.end() - match.start()));
-            } else {
-                repl = replacement;
-            }
+            int span = Math.max(1, match.end() - match.start());
+            String repl = buildWordReplacement(match.matchedText(), mask, keepEdgeLetters, span);
             result.replace(match.start(), match.end(), repl);
         }
 
@@ -130,6 +125,16 @@ public class FilterProcessor {
             Collections.reverse(foundWords);
         }
         return new EngineResult(result.toString(), foundWords);
+    }
+
+    private String buildWordReplacement(String matched, String mask, boolean keepEdgeLetters, int span) {
+        if (keepEdgeLetters && mask.length() == 1) {
+            return generateDynamicReplacement(matched, mask.charAt(0));
+        }
+        if (mask.length() == 1) {
+            return String.valueOf(mask.charAt(0)).repeat(span);
+        }
+        return mask;
     }
 
     private LinkResult filterLinks(String message, java.util.UUID playerId) {
@@ -158,8 +163,10 @@ public class FilterProcessor {
         return new LinkResult(result.toString(), links);
     }
 
-    private String generateDynamicReplacement(String word) {
-        if (word == null || word.length() < 2) return word;
+    private String generateDynamicReplacement(String word, char maskChar) {
+        if (word == null || word.length() < 2) {
+            return word == null ? "" : word;
+        }
 
         int first = -1;
         int last = -1;
@@ -171,9 +178,13 @@ public class FilterProcessor {
                 letterCount++;
             }
         }
-        if (letterCount < 2) return word;
+        if (letterCount < 2 || first < 0 || last < 0) {
+            return String.valueOf(maskChar).repeat(Math.max(1, word.length()));
+        }
 
         int starsCount = letterCount - 2;
-        return word.charAt(first) + "*".repeat(Math.max(0, starsCount)) + word.charAt(last);
+        return word.charAt(first)
+                + String.valueOf(maskChar).repeat(Math.max(0, starsCount))
+                + word.charAt(last);
     }
 }

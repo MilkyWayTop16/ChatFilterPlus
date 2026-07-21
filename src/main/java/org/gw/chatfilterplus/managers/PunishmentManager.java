@@ -6,7 +6,6 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.gw.chatfilterplus.ChatFilterPlus;
-import org.gw.chatfilterplus.configs.ConfigUtils;
 import org.gw.chatfilterplus.utils.PermissionCompat;
 import org.gw.chatfilterplus.utils.PlaceholderUtil;
 
@@ -31,7 +30,6 @@ public class PunishmentManager {
 
     private final Map<FilterType, File> punishmentLogFiles = new EnumMap<>(FilterType.class);
     private final Map<FilterType, Map<String, ViolationCounter>> violations = new EnumMap<>(FilterType.class);
-    private final Map<FilterType, Map<String, Map<String, Long>>> notificationCooldowns = new EnumMap<>(FilterType.class);
     private final Map<FilterType, Set<String>> exemptPlayers = new EnumMap<>(FilterType.class);
     private final Map<FilterType, Set<String>> exemptGroups = new EnumMap<>(FilterType.class);
     private final Map<FilterType, String> bypassPermissions = new EnumMap<>(FilterType.class);
@@ -61,7 +59,6 @@ public class PunishmentManager {
         for (FilterType type : FilterType.values()) {
             punishmentLogFiles.put(type, new File(logsDir, type.punishmentLogFileName()));
             violations.put(type, new ConcurrentHashMap<>());
-            notificationCooldowns.put(type, new ConcurrentHashMap<>());
         }
 
         punishmentLogFiles.values().forEach(this::createLogFileIfNotExists);
@@ -114,16 +111,7 @@ public class PunishmentManager {
                 if (Bukkit.getPlayerExact(entry.getKey()) != null) return false;
                 return currentTime - entry.getValue().lastViolationAt() > VIOLATION_RETENTION_MILLIS;
             });
-            cleanCooldowns(notificationCooldowns.get(type), currentTime);
         }
-    }
-
-    private void cleanCooldowns(Map<String, Map<String, Long>> cooldownsMap, long currentTime) {
-        cooldownsMap.entrySet().removeIf(entry -> {
-            if (Bukkit.getPlayerExact(entry.getKey()) == null) return true;
-            entry.getValue().entrySet().removeIf(cooldown -> currentTime > cooldown.getValue());
-            return entry.getValue().isEmpty();
-        });
     }
 
     public void handlePunishment(Player player, FilterType type, List<String> items) {
@@ -140,7 +128,6 @@ public class PunishmentManager {
 
         String stage = String.valueOf(violationCount);
         List<String> actions = stagesSection.getStringList(stage + ".actions");
-        List<String> cooldowns = stagesSection.getStringList(stage + ".notification-cooldowns");
 
         if (!actions.isEmpty()) {
             List<String> commands = parsePunishmentActions(actions, player, items);
@@ -149,7 +136,6 @@ public class PunishmentManager {
                 logPunishment(playerName, items, violationCount, stage, type);
             }
         }
-        updateNotificationCooldowns(playerName, cooldowns, type);
     }
 
     private boolean isPunishmentsEnabled(FilterType type) {
@@ -246,41 +232,8 @@ public class PunishmentManager {
         });
     }
 
-    private void updateNotificationCooldowns(String playerName, List<String> cooldowns, FilterType type) {
-        if (cooldowns == null || cooldowns.isEmpty()) return;
-
-        Map<String, Long> playerCooldowns = notificationCooldowns.get(type)
-                .computeIfAbsent(playerName, k -> new ConcurrentHashMap<>());
-        long currentTime = System.currentTimeMillis();
-
-        for (String cooldown : cooldowns) {
-            if (cooldown == null) continue;
-            String[] parts = cooldown.split(":", 2);
-            if (parts.length != 2) continue;
-
-            long durationMillis = ConfigUtils.parseDuration(parts[1].trim());
-            if (durationMillis > 0) {
-                playerCooldowns.put(parts[0].trim().toLowerCase(Locale.ROOT), currentTime + durationMillis);
-            }
-        }
-    }
-
-    public boolean isNotificationOnCooldown(String playerName, FilterType type, String channel) {
-        if (playerName == null || type == null || channel == null) return false;
-        Map<String, Long> playerCooldowns = notificationCooldowns.get(type).get(playerName);
-        if (playerCooldowns == null || playerCooldowns.isEmpty()) return false;
-
-        long now = System.currentTimeMillis();
-        Long allUntil = playerCooldowns.get("all");
-        if (allUntil != null && now < allUntil) return true;
-
-        Long until = playerCooldowns.get(channel.toLowerCase(Locale.ROOT));
-        return until != null && now < until;
-    }
-
     public void reload() {
         violations.values().forEach(Map::clear);
-        notificationCooldowns.values().forEach(Map::clear);
         reloadExemptCache();
     }
 }

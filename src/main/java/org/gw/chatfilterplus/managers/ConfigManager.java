@@ -190,6 +190,11 @@ public class ConfigManager {
         return mainConfig.isAdminSelfNotifyEnabled();
     }
 
+    public String formatDurationSeconds(long totalSeconds) {
+        return org.gw.chatfilterplus.utils.DurationFormat.formatSeconds(
+                totalSeconds, mainConfig.getDurationFormat());
+    }
+
     public boolean isBadWordsFilterEnabled() {
         return badWords.isFilterEnabled();
     }
@@ -204,6 +209,10 @@ public class ConfigManager {
 
     public String getBadWordsFilterReplacement() {
         return badWords.getFilterReplacement();
+    }
+
+    public boolean isBadWordsKeepEdgeLetters() {
+        return badWords.isKeepEdgeLetters();
     }
 
     public boolean isBadWordsDetectEnglishLookalikes() {
@@ -322,6 +331,10 @@ public class ConfigManager {
         return blockedWords.getFilterReplacement();
     }
 
+    public boolean isBlockedWordsKeepEdgeLetters() {
+        return blockedWords.isKeepEdgeLetters();
+    }
+
     public String getBlockedWordsFilterLevel() {
         return blockedWords.getFilterLevel();
     }
@@ -392,6 +405,14 @@ public class ConfigManager {
 
     public int getCharacterFloodCooldownSeconds() {
         return antiSpam.getCharacterFloodCooldownSeconds();
+    }
+
+    public boolean isNewPlayerChatLockEnabled() {
+        return antiSpam.isNewPlayerChatLockEnabled();
+    }
+
+    public long getNewPlayerChatLockMillis() {
+        return antiSpam.getNewPlayerChatLockMillis();
     }
 
     public Set<String> getAntiSpamExceptionPlayers() {

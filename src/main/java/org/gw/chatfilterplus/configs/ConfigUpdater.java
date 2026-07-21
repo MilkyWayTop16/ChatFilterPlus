@@ -62,16 +62,10 @@ public class ConfigUpdater {
         }
     }
 
-    /**
-     * Technical reference lists that must gain new default entries on upgrade. Without this an
-     * existing config keeps its old list forever (a present key is never touched), so a server
-     * upgrading from an older version would detect fewer domains than a fresh install.
-     * Only lists that are reference data belong here — user-owned lists (whitelist domains,
-     * exception players/groups, bad-words) must never be repopulated behind the admin's back.
-     */
     private static final Set<String> UNION_MERGED_LISTS = Set.of(
             "filter.smart-detection.tlds",
-            "filter.smart-detection.quick-triggers"
+            "filter.smart-detection.quick-triggers",
+            "filter.adaptive-ad-filter.phrase-templates.templates"
     );
 
     private boolean mergeMissingKeys(FileConfiguration user, FileConfiguration defaults, String path) {
@@ -104,7 +98,6 @@ public class ConfigUpdater {
         return changed;
     }
 
-    /** Appends default entries the user's list is missing, preserving their own order and additions. */
     private boolean mergeListUnion(FileConfiguration user, ConfigurationSection defaults,
                                    String key, String fullKey) {
         List<String> defaultList = defaults.getStringList(key);

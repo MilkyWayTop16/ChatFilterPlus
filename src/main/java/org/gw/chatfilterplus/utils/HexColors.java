@@ -2,15 +2,12 @@ package org.gw.chatfilterplus.utils;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
-import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 public final class HexColors {
@@ -22,15 +19,14 @@ public final class HexColors {
             "ff5555", "ff55ff", "ffff55", "ffffff"
     };
 
-    private static final MiniMessage MINI_MESSAGE = createMiniMessage();
+    private static final String LEGACY = "0123456789abcdefklmnorABCDEFKLMNOR";
+    private static final String HEX = "0123456789abcdefABCDEF";
 
-    private static final LegacyComponentSerializer SECTION_HEX = LegacyComponentSerializer.builder()
-            .character('§')
-            .hexColors()
-            .useUnusualXRepeatedCharacterHexFormat()
-            .build();
+    private static final MiniMessage MINI = createMini();
+    private static final LegacyComponentSerializer SECTION = createSection();
+    private static final LegacyComponentSerializer SECTION_PLAIN = LegacyComponentSerializer.legacySection();
 
-    private static final Map<String, String> TRANSLATE_CACHE =
+    private static final Map<String, String> CACHE =
             Collections.synchronizedMap(new LinkedHashMap<>(256, 0.75f, true) {
                 @Override
                 protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
@@ -41,59 +37,50 @@ public final class HexColors {
     private HexColors() {
     }
 
-    private static MiniMessage createMiniMessage() {
+    private static MiniMessage createMini() {
         try {
-            String ver = Bukkit.getBukkitVersion();
-            if (ver.startsWith("1.16")) {
-                return null;
-            }
+            if (Bukkit.getBukkitVersion().startsWith("1.16")) return null;
             return MiniMessage.miniMessage();
         } catch (Throwable t) {
             return null;
         }
     }
 
-    public static boolean isMiniMessageAvailable() {
-        return MINI_MESSAGE != null;
+    private static LegacyComponentSerializer createSection() {
+        try {
+            return LegacyComponentSerializer.builder()
+                    .character('§')
+                    .hexColors()
+                    .useUnusualXRepeatedCharacterHexFormat()
+                    .build();
+        } catch (Throwable t) {
+            return LegacyComponentSerializer.legacySection();
+        }
     }
 
     public static String translate(String text) {
         if (text == null || text.isEmpty()) return "";
-        String cached = TRANSLATE_CACHE.get(text);
+        String cached = CACHE.get(text);
         if (cached != null) return cached;
         String result = convert(text, false);
-        TRANSLATE_CACHE.put(text, result);
+        CACHE.put(text, result);
         return result;
-    }
-
-    public static List<String> translate(List<String> text) {
-        if (text == null) return new ArrayList<>();
-        List<String> out = new ArrayList<>(text.size());
-        for (String line : text) {
-            out.add(translate(line));
-        }
-        return out;
     }
 
     public static Component translateToComponent(String message) {
         if (message == null || message.isEmpty()) return Component.empty();
-        if (MINI_MESSAGE != null) {
+        if (MINI != null) {
             try {
-                return MINI_MESSAGE.deserialize(convert(message, true));
+                return MINI.deserialize(convert(message, true));
             } catch (Throwable ignored) {
             }
         }
-        return SECTION_HEX.deserialize(convert(message, false));
+        return SECTION.deserialize(convert(message, false));
     }
 
     public static String translateForConsole(String text) {
         if (text == null || text.isEmpty()) return "";
-        return LegacyComponentSerializer.legacySection().serialize(translateToComponent(text));
-    }
-
-    public static Component fromSection(String sectionText) {
-        if (sectionText == null || sectionText.isEmpty()) return Component.empty();
-        return SECTION_HEX.deserialize(sectionText);
+        return SECTION_PLAIN.serialize(translateToComponent(text));
     }
 
     public static void sendMessage(CommandSender sender, String message) {
@@ -106,17 +93,12 @@ public final class HexColors {
     }
 
     public static String stripMiniMessageTags(String text) {
-        if (text == null || text.isEmpty() || MINI_MESSAGE == null) return text;
+        if (text == null || text.isEmpty() || MINI == null) return text;
         try {
-            return MINI_MESSAGE.stripTags(text);
+            return MINI.stripTags(text);
         } catch (Throwable t) {
             return text;
         }
-    }
-
-    public static String toGsonJsonFromComponent(Component component) {
-        if (component == null) return "{\"text\":\"\"}";
-        return GsonComponentSerializer.gson().serialize(component);
     }
 
     private static String convert(String input, boolean mini) {
@@ -125,6 +107,7 @@ public final class HexColors {
         int n = input.length();
         while (i < n) {
             char c = input.charAt(i);
+
             if (c == '<' && mini) {
                 int close = input.indexOf('>', i);
                 if (close != -1 && close - i <= 64) {
@@ -134,25 +117,17 @@ public final class HexColors {
                 }
             }
 
-            char marker = 0;
-            if (c == '&' || c == '§') {
-                marker = c;
-            }
-
-            if (marker != 0 && i + 1 < n) {
+            if ((c == '&' || c == '§') && i + 1 < n) {
                 char next = input.charAt(i + 1);
 
-                if (next == '#' && i + 7 < n) {
-                    String hex = input.substring(i + 2, i + 8);
-                    if (isHex6(hex)) {
-                        appendHex(out, hex, mini);
-                        i += 8;
-                        continue;
-                    }
+                if (next == '#' && i + 7 < n && isHex6(input, i + 2)) {
+                    appendHex(out, input.substring(i + 2, i + 8), mini);
+                    i += 8;
+                    continue;
                 }
 
                 if ((next == 'x' || next == 'X') && i + 13 < n) {
-                    String hex = readRepeatedHex(input, i + 2, marker);
+                    String hex = readXHex(input, i + 2, c);
                     if (hex != null) {
                         appendHex(out, hex, mini);
                         i += 14;
@@ -160,20 +135,18 @@ public final class HexColors {
                     }
                 }
 
-                if (isLegacyCode(next)) {
+                if (LEGACY.indexOf(next) >= 0) {
                     appendLegacy(out, next, mini);
                     i += 2;
                     continue;
                 }
             }
 
-            if (c == '#' && i + 6 < n) {
-                String hex = input.substring(i + 1, i + 7);
-                if (isHex6(hex) && (i == 0 || !isHexChar(input.charAt(i - 1)))) {
-                    appendHex(out, hex, mini);
-                    i += 7;
-                    continue;
-                }
+            if (c == '#' && i + 6 < n && isHex6(input, i + 1)
+                    && (i == 0 || HEX.indexOf(input.charAt(i - 1)) < 0)) {
+                appendHex(out, input.substring(i + 1, i + 7), mini);
+                i += 7;
+                continue;
             }
 
             if (c == '<' && !mini) {
@@ -190,27 +163,23 @@ public final class HexColors {
         return out.toString();
     }
 
-    private static String readRepeatedHex(String input, int start, char marker) {
-        StringBuilder hex = new StringBuilder(6);
+    private static String readXHex(String input, int start, char marker) {
+        char[] hex = new char[6];
         for (int j = 0; j < 6; j++) {
             int pos = start + j * 2;
-            if (input.charAt(pos) != marker || !isHexChar(input.charAt(pos + 1))) {
-                return null;
-            }
-            hex.append(input.charAt(pos + 1));
+            if (input.charAt(pos) != marker || HEX.indexOf(input.charAt(pos + 1)) < 0) return null;
+            hex[j] = input.charAt(pos + 1);
         }
-        return hex.toString();
+        return new String(hex);
     }
 
     private static void appendHex(StringBuilder out, String hex, boolean mini) {
         if (mini) {
             out.append("<#").append(hex).append('>');
-        } else {
-            out.append('§').append('x');
-            for (int i = 0; i < 6; i++) {
-                out.append('§').append(Character.toLowerCase(hex.charAt(i)));
-            }
+            return;
         }
+        out.append('§').append('x');
+        for (int i = 0; i < 6; i++) out.append('§').append(Character.toLowerCase(hex.charAt(i)));
     }
 
     private static void appendLegacy(StringBuilder out, char code, boolean mini) {
@@ -220,34 +189,25 @@ public final class HexColors {
             appendHex(out, PALETTE[idx], mini);
             return;
         }
-        if (mini) {
-            out.append(switch (c) {
-                case 'k' -> "<obfuscated>";
-                case 'l' -> "<bold>";
-                case 'm' -> "<strikethrough>";
-                case 'n' -> "<underlined>";
-                case 'o' -> "<italic>";
-                case 'r' -> "<reset>";
-                default -> "&" + code;
-            });
-        } else {
+        if (!mini) {
             out.append('§').append(c);
+            return;
+        }
+        switch (c) {
+            case 'k' -> out.append("<obfuscated>");
+            case 'l' -> out.append("<bold>");
+            case 'm' -> out.append("<strikethrough>");
+            case 'n' -> out.append("<underlined>");
+            case 'o' -> out.append("<italic>");
+            case 'r' -> out.append("<reset>");
+            default -> out.append('&').append(code);
         }
     }
 
-    private static boolean isLegacyCode(char c) {
-        return "0123456789abcdefklmnorABCDEFKLMNOR".indexOf(c) != -1;
-    }
-
-    private static boolean isHex6(String s) {
-        if (s == null || s.length() != 6) return false;
+    private static boolean isHex6(String s, int off) {
         for (int i = 0; i < 6; i++) {
-            if (!isHexChar(s.charAt(i))) return false;
+            if (HEX.indexOf(s.charAt(off + i)) < 0) return false;
         }
         return true;
-    }
-
-    private static boolean isHexChar(char c) {
-        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
     }
 }

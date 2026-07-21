@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ChatDecisionStore {
 
     private static final long DECISION_TTL_MILLIS = 3_000L;
+    private static final long REAPPLY_DEDUPE_MILLIS = 250L;
 
     private final Plugin plugin;
     private final Map<UUID, PendingChatDecision> pendingChat = new ConcurrentHashMap<>();
@@ -59,6 +60,19 @@ public final class ChatDecisionStore {
                 commandLabel, originalArgs, finalFullMessage, blocked, modified));
     }
 
+    public boolean hasActiveMatchingDecision(UUID uuid, String currentMessage) {
+        if (uuid == null) return false;
+
+        PendingChatDecision decision = pendingChat.get(uuid);
+        if (decision == null || decision.isExpired()) {
+            if (decision != null) pendingChat.remove(uuid, decision);
+            return false;
+        }
+
+        String current = currentMessage != null ? currentMessage : "";
+        return decision.matches(current);
+    }
+
     public boolean tryReapplyExisting(UUID uuid,
                                       String currentMessage,
                                       ChatManager.ChatEventAccess access,
@@ -73,6 +87,9 @@ public final class ChatDecisionStore {
 
         String current = currentMessage != null ? currentMessage : "";
         if (!decision.matches(current)) {
+            return false;
+        }
+        if (System.currentTimeMillis() - decision.createdAt > REAPPLY_DEDUPE_MILLIS) {
             return false;
         }
 

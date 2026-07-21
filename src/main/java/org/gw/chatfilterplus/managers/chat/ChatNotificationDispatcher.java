@@ -53,6 +53,21 @@ public final class ChatNotificationDispatcher {
                                      MessageCacheManager.CachedMessage cached,
                                      Set<FilterType> bypassed,
                                      String originalMessage) {
+        sendNotifications(player, cached, bypassed, originalMessage, true);
+    }
+
+    public void sendFilterNotificationsOnly(Player player,
+                                            MessageCacheManager.CachedMessage cached,
+                                            Set<FilterType> bypassed,
+                                            String originalMessage) {
+        sendNotifications(player, cached, bypassed, originalMessage, false);
+    }
+
+    private void sendNotifications(Player player,
+                                   MessageCacheManager.CachedMessage cached,
+                                   Set<FilterType> bypassed,
+                                   String originalMessage,
+                                   boolean applyPunishment) {
         if (player == null || !player.isOnline() || cached == null) return;
 
         FilterType punishmentType = null;
@@ -69,20 +84,19 @@ public final class ChatNotificationDispatcher {
             List<String> items = detectedItems(cached, type, originalMessage);
 
             if (notifyApplies) {
-                sendFilterNotification(type, player, items);
-                if (type == FilterType.CAPS
-                        && !punishmentManager.isNotificationOnCooldown(player.getName(), type, "player")) {
+                sendFilterNotification(type, player, notificationItems(type, items, originalMessage));
+                if (type == FilterType.CAPS) {
                     notificationManager.notifyPlayer(player, FilterType.CAPS, "[CAPS]");
                 }
             }
 
-            if (punishmentType == null && filterApplies) {
+            if (applyPunishment && punishmentType == null && filterApplies) {
                 punishmentType = type;
                 punishmentItems = items;
             }
         }
 
-        if (punishmentType != null) {
+        if (applyPunishment && punishmentType != null) {
             punishmentManager.handlePunishment(player, punishmentType, punishmentItems);
         }
     }
@@ -94,32 +108,39 @@ public final class ChatNotificationDispatcher {
         String playerName = player.getName();
         FilterType type = FilterType.ANTI_SPAM;
 
-        plugin.log(type.getConsoleLabel() + " от &#ffff00" + playerName + " &f→ &#ffff00" + originalMessage);
+        boolean newPlayerLock = "new-player-chat-lock".equals(result.reason);
 
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "file")) {
+        if (!newPlayerLock) {
+            plugin.log(type.getConsoleLabel() + " от &#ffff00" + playerName + " &f→ &#ffff00" + originalMessage);
+
             logToFile(playerName, items, type);
-        }
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "admin")) {
             notificationManager.notifyAdmins(player, type, items);
-        }
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "console")) {
             notificationManager.notifyConsole(player, type, items);
-        }
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "discord")) {
             notificationManager.notifyDiscord(player, type, items);
         }
 
         String subPath = switch (result.reason) {
             case "similar-message-cooldown" -> "similar-message-cooldown";
             case "character-flood", "character-flood-first" -> "character-flood";
+            case "new-player-chat-lock" -> "new-player-chat-lock";
             default -> "general-cooldown";
         };
 
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "player")) {
-            Map<String, String> placeholders = Map.of("remaining", String.valueOf(result.remainingSeconds));
-            configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
+        int totalSec = Math.max(0, result.remainingSeconds);
+        String formatted = configManager.formatDurationSeconds(totalSec);
+        int min = totalSec / 60;
+        int sec = totalSec % 60;
+        Map<String, String> placeholders = Map.of(
+                "remaining", formatted,
+                "remaining-total", String.valueOf(totalSec),
+                "remaining-min", String.valueOf(min),
+                "remaining-sec", String.valueOf(sec)
+        );
+        configManager.executeActionsFromAntiSpam(player, subPath, placeholders);
+
+        if (!newPlayerLock) {
+            punishmentManager.handlePunishment(player, type, items);
         }
-        punishmentManager.handlePunishment(player, type, items);
     }
 
     private void sendFilterNotification(FilterType type, Player player, List<String> items) {
@@ -128,20 +149,11 @@ public final class ChatNotificationDispatcher {
         String playerName = player.getName();
         plugin.log(type.getConsoleLabel() + " от &#ffff00" + playerName + " &f→ &#ffff00" + String.join(", ", items));
 
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "file")) {
-            logToFile(playerName, items, type);
-        }
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "admin")) {
-            notificationManager.notifyAdmins(player, type, items);
-        }
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "console")) {
-            notificationManager.notifyConsole(player, type, items);
-        }
-        if (!punishmentManager.isNotificationOnCooldown(playerName, type, "discord")) {
-            notificationManager.notifyDiscord(player, type, items);
-        }
-        if (type != FilterType.CAPS
-                && !punishmentManager.isNotificationOnCooldown(playerName, type, "player")) {
+        logToFile(playerName, items, type);
+        notificationManager.notifyAdmins(player, type, items);
+        notificationManager.notifyConsole(player, type, items);
+        notificationManager.notifyDiscord(player, type, items);
+        if (type != FilterType.CAPS) {
             notificationManager.notifyPlayer(player, type, items.isEmpty() ? "" : items.get(0));
         }
     }
@@ -201,6 +213,16 @@ public final class ChatNotificationDispatcher {
                     .replace("{original-message}", items.get(i)));
         }
         return sb.toString();
+    }
+
+    private List<String> notificationItems(FilterType type, List<String> items, String originalMessage) {
+        if (type == FilterType.LINKS
+                && "block-and-notify".equalsIgnoreCase(configManager.getFilterMode(FilterType.LINKS))
+                && originalMessage != null
+                && !originalMessage.isEmpty()) {
+            return List.of(originalMessage);
+        }
+        return items;
     }
 
     private static List<String> detectedItems(MessageCacheManager.CachedMessage cached, FilterType type, String originalMessage) {

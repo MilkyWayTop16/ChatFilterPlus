@@ -2,12 +2,18 @@ package org.gw.chatfilterplus.managers;
 
 import org.gw.chatfilterplus.ChatFilterPlus;
 import org.gw.chatfilterplus.configs.ConfigUtils;
+import org.gw.chatfilterplus.utils.AdContactShare;
+import org.gw.chatfilterplus.utils.AdPhraseTemplateMatcher;
 import org.gw.chatfilterplus.utils.AdTextAnalyzer;
+import org.gw.chatfilterplus.utils.PlayerNameRegistry;
 
 import java.io.File;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class AdaptiveAdFilter {
 
@@ -59,8 +65,15 @@ public class AdaptiveAdFilter {
         }
     }
 
+    // Mojang usernames are strictly [A-Za-z0-9_], 2-16 chars after the '@' — nothing else can be a
+    // real player mention. Any @mention using other characters (Cyrillic, punctuation, spaces) is
+    // never a player ping regardless of who's online, so this check is applied before the (pricier)
+    // online-name lookup.
+    private static final Pattern MOJANG_MENTION = Pattern.compile("@([A-Za-z0-9_]{2,16})(?![A-Za-z0-9_])");
+
     private final ChatFilterPlus plugin;
     private final ConfigManager configManager;
+    private final Supplier<Set<String>> onlinePlayerNames;
     private final Map<UUID, PlayerAdState> states = new ConcurrentHashMap<>();
 
     private volatile boolean enabled;
@@ -74,10 +87,27 @@ public class AdaptiveAdFilter {
     private volatile boolean trackSimilarity;
     private volatile boolean blockWholeMessageOnAdaptive;
     private volatile List<String> promoKeywords;
+    private volatile boolean phraseTemplatesEnabled;
+    private volatile AdPhraseTemplateMatcher phraseMatcher;
+    private volatile int phraseTemplateScore;
 
     public AdaptiveAdFilter(ChatFilterPlus plugin, ConfigManager configManager) {
+        this(plugin, configManager, Set::of);
+    }
+
+    /**
+     * @param onlinePlayerNames supplies the currently-online player names (see
+     *                          {@link PlayerNameRegistry#normalize}), so an @mention of a real
+     *                          player in chat ("@Steve скинь ссылку на скин") isn't scored as an
+     *                          advertised handle just because it sits next to an ordinary word that
+     *                          happens to also be a promo keyword ("ссылку"/"донат"/"инвайт"/…).
+     *                          {@code Set::of} disables the exemption (e.g. in tests without Bukkit).
+     */
+    public AdaptiveAdFilter(ChatFilterPlus plugin, ConfigManager configManager,
+                            Supplier<Set<String>> onlinePlayerNames) {
         this.plugin = plugin;
         this.configManager = configManager;
+        this.onlinePlayerNames = onlinePlayerNames != null ? onlinePlayerNames : Set::of;
         reload();
         startCleanupTask();
     }
@@ -102,6 +132,21 @@ public class AdaptiveAdFilter {
         if (promoKeywords.isEmpty()) {
             promoKeywords = defaultKeywords();
         }
+
+        phraseTemplatesEnabled = cfg.getBoolean("filter.adaptive-ad-filter.phrase-templates.enabled", false);
+        int phraseMinSim = clampPercent(cfg.getInt(
+                "filter.adaptive-ad-filter.phrase-templates.min-similarity-percent",
+                highPrecisionMode ? 72 : 62));
+        int phraseMinLen = Math.max(6, cfg.getInt("filter.adaptive-ad-filter.phrase-templates.min-message-length", 12));
+        phraseTemplateScore = Math.max(minScoreToBlock,
+                cfg.getInt("filter.adaptive-ad-filter.phrase-templates.hit-score", 78));
+        List<String> templates = ConfigUtils.cleanStringList(
+                cfg.getStringList("filter.adaptive-ad-filter.phrase-templates.templates"));
+        if (templates.isEmpty()) {
+            templates = defaultPhraseTemplates();
+        }
+        phraseMatcher = AdPhraseTemplateMatcher.compile(templates, phraseMinSim, phraseMinLen);
+
         if (!enabled) {
             clear();
         }
@@ -119,6 +164,68 @@ public class AdaptiveAdFilter {
                 "лучший тгк", "мой тгк", "наш тгк", "тг канал", "тг-канал",
                 "invite", "инвайт", "промокод", "реклама",
                 "айпи", "donate", "донат"
+        );
+    }
+
+    private static List<String> defaultPhraseTemplates() {
+        return List.of(
+                "самый лучший тгк {name}",
+                "самый топовый тгк {name}",
+                "лучший тгк {name}",
+                "топовый тгк {name}",
+                "мой тгк {name}",
+                "наш тгк {name}",
+                "тг канал {name}",
+                "тг-канал {name}",
+                "телеграм канал {name}",
+                "телега {name}",
+                "подпишись на тгк {name}",
+                "заходи в тгк {name}",
+                "переходи в тгк {name}",
+                "ссылка на тгк {name}",
+                "скидываю тгк {name}",
+                "в тгк {name}",
+                "самый лучший tgc {name}",
+                "лучший tgc {name}",
+                "топовый tgc {name}",
+                "самый лучший tgk {name}",
+                "лучший tgk {name}",
+                "топовый tgk {name}",
+                "telegram {@name}",
+                "tg {@name}",
+                "discord {@name}",
+                "дискорд {@name}",
+                "дс {@name}",
+                "наш дискорд {@name}",
+                "наш дс {@name}",
+                "заходи в дискорд {@name}",
+                "заходи в дс {@name}",
+                "discord сервер {@name}",
+                "дискорд сервер {@name}",
+                "invite {@name}",
+                "инвайт {@name}",
+                "топовый гриферский сервер {domain}",
+                "лучший гриферский сервер {domain}",
+                "гриферский сервер {domain}",
+                "топовый анархо сервер {domain}",
+                "лучший анархия сервер {domain}",
+                "анархо сервер {domain}",
+                "анархия сервер {domain}",
+                "ванильный сервер {domain}",
+                "выживание сервер {domain}",
+                "топовый сервер {domain}",
+                "новый сервер {domain}",
+                "открылся сервер {domain}",
+                "заходи на сервер {domain}",
+                "залетайте на сервер {domain}",
+                "играй на сервере {domain}",
+                "ip сервера {domain}",
+                "айпи сервера {domain}",
+                "ip {domain}",
+                "айпи {domain}",
+                "наш сервер {domain}",
+                "лучший сервер {domain}",
+                "заходи на {domain}"
         );
     }
 
@@ -183,9 +290,18 @@ public class AdaptiveAdFilter {
         }
         int level = existing == null ? 0 : existing.currentLevel();
 
+        AdPhraseTemplateMatcher.Match phraseMatch = null;
+        if (phraseTemplatesEnabled && phraseMatcher != null && !phraseMatcher.isEmpty()) {
+            phraseMatch = phraseMatcher.match(message);
+            if (phraseMatch != null && isOnlinePlayerTarget(phraseMatch)) {
+                phraseMatch = null;
+            }
+        }
+
         if (level == 0 && !hasStandard
                 && message.indexOf('@') < 0
-                && !AdTextAnalyzer.containsUrlish(message)) {
+                && !AdTextAnalyzer.containsUrlish(message)
+                && phraseMatch == null) {
             return List.of();
         }
 
@@ -197,7 +313,7 @@ public class AdaptiveAdFilter {
 
         List<AdHit> hits = new ArrayList<>();
 
-        Set<String> handles = AdTextAnalyzer.extractHandles(message);
+        Set<String> handles = excludeOnlinePlayerMentions(message, AdTextAnalyzer.extractHandles(message));
         Set<String> keywords = AdTextAnalyzer.extractKeywords(message, promoKeywords);
         String compact = AdTextAnalyzer.compact(message);
         boolean hasUrlish = AdTextAnalyzer.containsUrlish(message);
@@ -231,11 +347,23 @@ public class AdaptiveAdFilter {
             score += 5;
             reasons.add("weak-keyword");
         }
+        boolean benignContact = level == 0
+                && AdContactShare.isBenignContactShare(message, keywords, handles, hasStandard, hasUrlish);
+
+        if (phraseMatch != null && !benignContact) {
+            score = Math.max(score, phraseTemplateScore);
+            reasons.add("phrase-template:" + (int) (phraseMatch.similarity() * 100));
+            hits.add(hit(message, "phrase-template", phraseTemplateScore));
+        } else if (phraseMatch != null) {
+            reasons.add("benign-contact");
+        }
 
         if (level == 0) {
-            if (strongKeyword && (!handles.isEmpty() || hasUrlish || hasStandard)) {
+            if (!benignContact
+                    && strongKeyword
+                    && (!handles.isEmpty() || hasUrlish || hasStandard)) {
                 hits.add(hit(message, "promo-combo", score));
-            } else if (!handles.isEmpty() && hasUrlish) {
+            } else if (!benignContact && !handles.isEmpty() && hasUrlish) {
                 hits.add(hit(message, "handle-url", score));
             }
         } else if (state != null) {
@@ -329,6 +457,55 @@ public class AdaptiveAdFilter {
         }
         int end = Math.min(message.length(), 32);
         return new AdHit(0, end, message.substring(0, end), reason, score);
+    }
+
+    /**
+     * Drops any extracted "handle" that is actually an @mention of a currently-online player —
+     * "@Steve скинь ссылку на скин" must not score like an ad handle just because "ссылку" is a
+     * promo keyword. A real advertised handle (Telegram channel, Discord invite) is never also the
+     * name of someone playing on this server, so matching against {@link #onlinePlayerNames} is
+     * precise: no heuristic guessing about wording, just "is this actually a player here".
+     * <p>
+     * Compared using {@link PlayerNameRegistry#normalize}, not {@link AdTextAnalyzer#compact}: Mojang
+     * names routinely carry digits/underscores ("steve_123", "Notick255") that compact()'s leet
+     * mapping would transform differently (digits become letters, underscore is dropped), so the two
+     * normalizations can diverge for the exact same name.
+     */
+    private Set<String> excludeOnlinePlayerMentions(String message, Set<String> handles) {
+        if (handles.isEmpty()) return handles;
+        Set<String> online = onlinePlayerNames.get();
+        if (online == null || online.isEmpty()) return handles;
+
+        Set<String> filtered = null;
+        Matcher m = MOJANG_MENTION.matcher(message);
+        while (m.find()) {
+            String raw = m.group(1);
+            String normalized = PlayerNameRegistry.normalize(raw);
+            if (normalized.length() < 2 || !online.contains(normalized)) continue;
+
+            String compactForm = AdTextAnalyzer.compact(raw);
+            if (!handles.contains(compactForm)) continue;
+
+            if (filtered == null) filtered = new LinkedHashSet<>(handles);
+            filtered.remove(compactForm);
+        }
+        return filtered != null ? filtered : handles;
+    }
+
+    /**
+     * Same online-player exemption as {@link #excludeOnlinePlayerMentions}, applied to the
+     * phrase-template matcher's own independently-extracted target: it runs its own
+     * {@code AdTextAnalyzer.extractHandles}/name detection, so an @mention of a real player can
+     * match a "{@name}"/"{name}" template (e.g. "заходи скорей {@name}") just as easily as it can
+     * trip the plain handle+keyword combo.
+     */
+    private boolean isOnlinePlayerTarget(AdPhraseTemplateMatcher.Match match) {
+        String kind = match.kind();
+        if (!"handle".equals(kind) && !"name".equals(kind)) return false;
+        Set<String> online = onlinePlayerNames.get();
+        if (online == null || online.isEmpty()) return false;
+        String normalized = PlayerNameRegistry.normalize(match.target());
+        return normalized.length() >= 2 && online.contains(normalized);
     }
 
     private boolean hasStrongPromoKeyword(Set<String> keywords) {

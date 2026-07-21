@@ -1,12 +1,17 @@
+
 .idea/
 *.iml
+.vscode/
+
+.DS_Store
+Thumbs.db
+
 out/
 target/
-
-*.class
+dev-tests/
+dependency-reduced-pom.xml
 
 *.log
-
 *.jar
 *.war
 *.nar
@@ -14,17 +19,14 @@ target/
 *.zip
 *.tar.gz
 *.rar
-
+*.bak
+*.tmp
 hs_err_pid*
 
-plugins/
-logs/
-world/
-world_nether/
-world_the_end/
+AGENTS.md
 
-# исходники сторонних плагинов, скачанные для анализа (чужие лицензии — не коммитить)
+.claude/
+
 references/
 
-# временный classpath для dev-tests
 cp.txt
