@@ -1,0 +1,343 @@
+#
+#              █▀▀ █░█ ▄▀█ ▀█▀ █▀▀ █ █░░ ▀█▀ █▀▀ █▀█ █▀█ █░░ █░█ █▀
+#              █▄▄ █▀█ █▀█ ░█░ █▀░ █ █▄▄ ░█░ ██▄ █▀▄ █▀▀ █▄▄ █▄█ ▄█
+#
+#                             (By MilkyWay for everyone)
+#
+#     ◆ Нашёл баг/ошибку/недочёт? Напиши мне о проблеме в Телеграмме - @vkusniy_milkyway
+#            ◆ Если плагин для тебя очень интересный, то ты всегда можешь
+#           оставить отзыв плагину, ну и подписаться на мой Тгк - @GornaSqd
+#                             Мне будет очень приятно :)
+#
+
+# Версия конфигурации плагина
+# (Ни в коем случае не трогать данный параметр!)
+config-version: 2.3
+
+settings:
+
+  # Настройка логирования
+  logs:
+    # Настройка логов плагина в консоль
+    console:
+      # Включен ли параметр? (true/false)
+      enabled: false
+
+  # Настройка кэширования сообщений
+  # (Позволяет сильно и хорошо оптимизировать плагин)
+  cache:
+    # Максимальный размер кэша (Количество хранимых сообщений)
+    # Рекомендации по размеру кэша:
+    #   Маленькие серверы — до 10 игроков; редкое использование чата: 100–500
+    #   Средние серверы — 30–100 игроков; умеренное использование чата: 500–1000
+    #   Крупные серверы — 100+ игроков; частое использование чата: 1000–5000
+    #   Очень крупные серверы — 400+ игроков; очень частое использование чата: 5000–10000
+    max-size: 1000
+    # Настройка автоматической очистки кэша
+    cleanup:
+      # Включена ли автоматическая очистка кэша? (true/false)
+      enabled: true
+      # Период очистки кэша (время, после которого записи считаются устаревшими)
+      # Формат: комбинация значений с единицами времени, разделённых пробелом
+      # Единицы времени: s (секунды), m (минуты), h (часы), d (дни), w (недели), y (годы)
+      retention-period: "5m"
+
+  # Анонимная статистика bStats
+  bstats:
+    # Включить ли анонимную статистику bStats? (true/false)
+    # (bStats автоматически собирает анонимную статистику об использовании плагина на серверах)
+    enabled: true
+
+  # Система проверки обновлений плагина
+  update-checker:
+    # Включить ли автоматическую проверку обновлений? (true/false)
+    enabled: true
+    # Режим отправки уведомлений об обновлении
+    # Доступные варианты:
+    #   on-start — уведомлять только при запуске сервера (в консоль и админам)
+    #   on-join — уведомлять только при заходе администратора
+    #   periodic — уведомлять каждое определённое кол-во часов (в консоль и админам)
+    #   both — и при старте, и при заходе, и периодически
+    notify-mode: both
+    # Интервал периодической проверки только для режимов "periodic" и "both" (в часах)
+    periodic-interval-hours: 6
+
+  # Совместимость с другими плагинами на чат (например, Chatty, ChatEx, EssentialsChat, UltimateChat, VentureChat, самописные и другие)
+  #
+  # Как это работает?
+  #   Плагин слушает и legacy AsyncPlayerChatEvent, и modern AsyncChatEvent, которые
+  #   есть на Paper и Purpur, фильтрует раньше большинства плагинов на чат и на HIGHEST
+  #   заново применяет замену или блокирует сообщение, если другой плагин перезаписал сообщение
+  #
+  # Важно понимать ограничение ядер Bukkit и Paper:
+  #   Прямо 100% совместимости со всеми плагинами, добавляющие на чат через event API гарантировать нельзя,
+  #   так как если плагин сам шлёт сообщения пакетами и Adventure и игнорирует setMessage на event,
+  #   замена через событие до него не дойдёт. Вот для таких случаев нужна интеграция на стороне
+  #   того плагина или перехват пакетов (например, ProtocolLib или PacketEvents) — это уже отдельная архитектура
+  #
+  compatibility:
+    # Приоритет primary-обработки чата (раньше = ниже в списке enum).
+    # Доступные варианты:
+    #   lowest — самым первым
+    #   low — чуть раньше normal
+    #   normal — стандартный приоритет Bukkit
+    #   high — позднее
+    #   highest — почти в конце
+    #   monitor — только наблюдение, без замены
+    event-priority: "lowest"
+    # Агрессивный режим перехвата:
+    #   true — обрабатывать даже уже отменённые события
+    #   false — уважать отмену других плагинов (Рекомендуется)
+    # (Устанавливайте на "true" только при реальном конфликте, когда даже параметр "lowest" не помогает)
+    aggressive-mode: false
+
+  # Фильтрация сообщений и слов в командах
+  command-filtering:
+    # Включить фильтрацию сообщений в командах? (true/false)
+    enabled: true
+    # Список команд, в которых будет применяться все фильтры слов
+    # (Всё, что идёт после самой команды, будет считаться сообщением и проходить через все фильтры)
+    # (Например, если параметр включен, то в личных сообщениях, объявлениях и так далее будет работать фильтрация сообщений)
+    commands:
+      - "broadcast"
+      - "bc"
+      - "say"
+      - "msg"
+      - "tell"
+      - "m"
+      - "whisper"
+      - "r"
+      - "reply"
+      - "me"
+      - "em"
+      - "ad"
+      - "message"
+
+  # Уведомления админам о своих собственных нарушениях
+  admin-self-notify:
+    # Не отправлять ли уведомления админам о своих же нарушениях в чате? (true/false)
+    # (Если включено, то при нарушении админу уведомления о своих нарушениях отправляться не будут)
+    enabled: true
+
+  # Формат длительности времени в сообщениях плагина
+  time-format:
+    days: "{value}д."
+    hours: "{value}ч."
+    minutes: "{value}м."
+    seconds: "{value}с."
+    # Разделитель между частями (сейчас стоит пробел и выглядеть это будет так: 13ч. 24м. 23с.)
+    separator: " "
+    # Не показывать единицу, если её значение равно 0? (true/false)
+    hide-zero: true
+    # Что показать, если всё время равно 0
+    zero: "0с."
+
+# Действия для сообщений плагина
+#
+# Доступные действия для любого списка:
+#
+#   [message] <Текст> — Отправляет сообщение игроку
+#   [message-console] <Текст> — Отправляет сообщение только в консоль
+#   [broadcast] <Текст> — Отправляет объявление всем игрокам на сервере
+#   [sound] <Айди звука> [Громкость] [Питч] — Проигрывает звук игроку
+#   [title] <Текст>;[Угасает через];[Остаётся сколько];[Пропадает через] — Показывает заголовок игроку (время в тиках)
+#   [subtitle] <Текст>;[Угасает через];[Остаётся сколько];[Пропадает через] — Показывает подзаголовок игроку (время в тиках)
+#   [actionbar] <Текст> — Показывает текст в строке действия игроку
+#   [console-command] <Команда> — Выполняет команду от имени консоли
+#   [player-command] <Команда> —Выполняет команду от имени игрока
+#   [effect] <Айди эффекта> <Длительность в секундах> [Уровень] — Даёт игроку эффект зелья
+#   [teleport] <x> <y> <z> <Мир> — Телепортирует игрока на координаты
+#   [give-item] <Материал> <Количество> — Выдаёт игроку любой предмет
+#
+actions:
+  errors:
+    no-permission:
+      - "[message] &#FB8808▶ &fНедостаточно &#FB8808прав на использование &fданной команды!"
+      - "[sound] BLOCK_ANVIL_LAND"
+    invalid-args-bad:
+      - "[message] &#FB8808▶ Ошибочка! &fПравильное использование: &#FB8808/cfp words add bad <Слово> <Замена>"
+      - "[sound] BLOCK_ANVIL_LAND"
+    invalid-args-words-add:
+      - "[message] &#FB8808▶ Ошибочка! &fПравильное использование: &#FB8808/cfp words add <bad/safe/blocked> <Слово> (Замена)"
+      - "[sound] BLOCK_ANVIL_LAND"
+    notify-player-not-found:
+      - "[message] &#FB8808▶ Ошибка! &fИгрок &#FB8808{player} &fне найден!"
+      - "[sound] BLOCK_ANVIL_LAND"
+    notify-console-cannot-toggle:
+      - "[message] &#FB8808▶ Ошибка! &fКонсоль &#FB8808не может &fпереключать уведомления для себя!"
+      - "[sound] BLOCK_ANVIL_LAND"
+
+  words:
+    add:
+      success:
+        - "[message] &#FFFF00◆ &fСлово &#FFFF00«{word}» &fуспешно добавлено в категорию &#FFFF00«{type}»"
+        - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+      already-exists:
+        - "[message] &#FB8808▶ Ошибочка! &fСлово &#FB8808«{word}» &fуже существует в этой категории!"
+        - "[sound] BLOCK_ANVIL_LAND"
+      failure:
+        - "[message] &#FB8808▶ Ошибочка! &fНе удалось добавить слово &#FB8808«{word}» &fпо какой-то причине..."
+        - "[sound] BLOCK_ANVIL_LAND"
+    remove:
+      success:
+        - "[message] &#FFFF00◆ &fСлово &#FFFF00«{word}» &fуспешно удалено из категории &#FFFF00«{type}»"
+        - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+      not-found:
+        - "[message] &#FB8808▶ Ошибка! &fСлово &#FB8808«{word}» &fне найдено в категории &#FFFF00«{type}»&f..."
+        - "[sound] BLOCK_ANVIL_LAND"
+      failure:
+        - "[message] &#FB8808▶ Ошибка! &fНе удалось удалить слово &#FB8808«{word}» &fиз категории &#FFFF00«{type}»&f..."
+        - "[sound] BLOCK_ANVIL_LAND"
+    list:
+      header:
+        - "[message] &#FFFF00◆ &fСписок всех слов категории &#FFFF00«{type}»&f:"
+        - "[sound] BLOCK_LEVER_CLICK"
+      item:
+        - "[message] &f  — &#FFFF00{word}"
+      empty:
+        - "[message] &#FB8808▶ &fСписок слов категории &#FB8808«{type}» &f полностью пуст..."
+        - "[sound] BLOCK_LEVER_CLICK"
+
+  links:
+    whitelist:
+      add:
+        success:
+          - "[message] &#FFFF00◆ &fСсылка/домен &#FFFF00«{link}» &fуспешно добавлен в вайтлист!"
+          - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+        already-exists:
+          - "[message] &#FB8808▶ Ошибочка! &fСсылка/домен &#FB8808«{link}» &fуже есть в вайтлисте!"
+          - "[sound] BLOCK_ANVIL_LAND"
+        failure:
+          - "[message] &#FB8808▶ Ошибка! &fНе удалось добавить домен &#FB8808«{link}»&fпо какой-то причине..."
+          - "[sound] BLOCK_ANVIL_LAND"
+      remove:
+        success:
+          - "[message] &#FFFF00◆ &fСсылка/домен &#FFFF00«{link}» &fуспешно удалён из вайтлиста!"
+          - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+        not-found:
+          - "[message] &#FB8808▶ Ошибочка! &fСсылка/домен &#FB8808«{link}» &fне найден в вайлисте!"
+          - "[sound] BLOCK_ANVIL_LAND"
+    keywords:
+      add:
+        success:
+          - "[message] &#FFFF00◆ &fПромо-слово &#FFFF00«{word}» &fуспешно добавлено!"
+          - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+        already-exists:
+          - "[message] &#FB8808▶ Ошибочка! &fПромо-слово &#FB8808«{word}» &fуже есть в списке!"
+          - "[sound] BLOCK_ANVIL_LAND"
+      remove:
+        success:
+          - "[message] &#FFFF00◆ &fПромо-слово &#FFFF00«{word}» &fуспешно удалено!"
+          - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+        not-found:
+          - "[message] &#FB8808▶ Ошибочка! &fПромо-слово &#FB8808«{word}» &fне найдено в списке!"
+          - "[sound] BLOCK_ANVIL_LAND"
+      list:
+        header:
+          - "[message] &#FFFF00▶ &fСписок промо-слов рекламы:"
+          - "[sound] BLOCK_LEVER_CLICK"
+        item:
+          - "[message] &f  — &#FFFF00{word}"
+        empty:
+          - "[message] &#FB8808▶ &fСписок промо-слов рекламы &#FB8808полностью &fпуст..."
+          - "[sound] BLOCK_LEVER_CLICK"
+    list:
+      header:
+        - "[message] &#FFFF00▶ &fСписок ссылок/доменов из вайтлиста:"
+        - "[sound] BLOCK_LEVER_CLICK"
+      item:
+        - "[message] &f  — &#FFFF00{link}"
+      empty:
+        - "[message] &#FB8808▶ &fСписок ссылок/доменов в вайтлисте &#FB8808полностью &fпуст..."
+        - "[sound] BLOCK_LEVER_CLICK"
+
+  caps:
+    whitelist:
+      add:
+        success:
+          - "[message] &#FFFF00◆ &fСлово &#FFFF00«{word}» &fуспешно добавлено в вайтлист капса!"
+          - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+        already-exists:
+          - "[message] &#FB8808▶ Ошибка! &fСлово &#FB8808«{word}» &fуже есть в вайтлисте капса!"
+          - "[sound] BLOCK_ANVIL_LAND"
+      remove:
+        success:
+          - "[message] &#FFFF00◆ &fСлово &#FFFF00«{word}» &fуспешно удалено из вайтлиста капса!"
+          - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+        not-found:
+          - "[message] &#FB8808▶ Ошибочка! &fСлово &#FB8808«{word}» &fне найдено в вайтлисте капса!"
+    list:
+      header:
+        - "[message] &#FFFF00▶ &fСписок слов капса из вайтлиста:"
+        - "[sound] BLOCK_LEVER_CLICK"
+      item:
+        - "[message] &f  — &#FFFF00{word}"
+      empty:
+        - "[message] &#FB8808▶ &fСписок слов капса в вайтлисте &#FB8808полностью &fпуст..."
+        - "[sound] BLOCK_LEVER_CLICK"
+
+  reload:
+    configs:
+      success:
+        - "[message] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| Все .yml-файлы &#ffff00успешно &fперезагружены за &#ffff00{time}мс."
+        - "[message-console] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| Все .yml-файлы &#ffff00успешно &fперезагружены за &#ffff00{time}мс."
+        - "[sound] ENTITY_PLAYER_LEVELUP"
+    cache:
+      success:
+        - "[message] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| &fВесь кэш сообщений &#ffff00успешно &fочищен за &#ffff00{time}мс."
+        - "[message-console] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| &fВесь кэш сообщений &#ffff00успешно &fочищен за &#ffff00{time}мс."
+        - "[sound] ITEM_BOTTLE_FILL"
+    all:
+      success:
+        - "[message] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| &fПлагин полностью &#ffff00успешно &fперезагружен за &#FFFF00{time}мс."
+        - "[message-console] <gradient:#FFFF00:#ffa500>◆ ChatFilterPlus</gradient> &f| &fПлагин полностью &#ffff00успешно &fперезагружен за &#FFFF00{time}мс."
+        - "[sound] ENTITY_PLAYER_LEVELUP"
+    failure:
+      - "[message] &#FB8808▶ Ошибка! &fПочему-то &#FB8808не удалось &fперезагрузить плагин (Смотрите подробности в консоли)..."
+      - "[sound] BLOCK_ANVIL_LAND"
+
+  notify:
+    enabled:
+      - "[message] &#FFFF00◆ (ᴄʜᴀᴛ-ꜰɪʟᴛᴇʀ) &f| Уведомления для игрока &#FFFF00{player}&f: &#FFFF00Включены"
+      - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+    disabled:
+      - "[message] &#FFFF00◆ (ᴄʜᴀᴛ-ꜰɪʟᴛᴇʀ) &f| Уведомления для игрока &#FFFF00{player}&f: &#FFFF00Выключены"
+      - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+    enabled-self:
+      - "[message] &#FFFF00◆ (ᴄʜᴀᴛ-ꜰɪʟᴛᴇʀ) &f| Уведомления вам: &#FFFF00Включены"
+      - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+    disabled-self:
+      - "[message] &#FFFF00◆ (ᴄʜᴀᴛ-ꜰɪʟᴛᴇʀ) &f| Уведомления вам: &#FFFF00Выключены"
+      - "[sound] ENTITY_EXPERIENCE_ORB_PICKUP"
+
+  update:
+    available:
+      - "[message] &r "
+      - "[message] &#ffff00▶ &fИтак, хочу сказать, что у меня &#ffff00появилась новая &fверсия &#ffff00{latest-version}&f, а текущая — &#ffff00v{current-version}&f, так что советую обновить меня)"
+      - "[message] &r "
+      - "[message] &#ffff00◆ &fСкачать новую версию можно тут: &#ffff00{download-link}"
+      - "[message] &r "
+      - "[message-console] &#ffff00◆ ChatFilterPlus &f| Доступна новая версия &#ffff00{latest-version}&f, а текущая — &#ffff00v{current-version}&f, так что можно обновить тут: &#ffff00{download-link}"
+      - "[sound] ENTITY_PLAYER_LEVELUP"
+
+  help:
+    - "[message] &r "
+    - "[message] &#FFFF00▶ &fКоманды плагина:"
+    - "[message] &r "
+    - "[message] &#FFFF00   ◆ /cfp words add <bad/safe/blocked> <Слово> (Замена) &f— Добавить слово"
+    - "[message] &#FFFF00   ◆ /cfp words remove <bad/safe/blocked> <Слово> &f— Удалить слово"
+    - "[message] &#FFFF00   ◆ /cfp words list <bad/safe/blocked/all> &f— Посмотреть список"
+    - "[message] &r "
+    - "[message] &#FFFF00   ◆ /cfp links whitelist add/remove <Ссылка/домен> &f— Управление вайтлистом ссылок и доменов"
+    - "[message] &#FFFF00   ◆ /cfp links keywords add/remove <Слово> &f— Управление ключевыми словами рекламы"
+    - "[message] &#FFFF00   ◆ /cfp links keywords list &f— Список ключевых слов рекламы"
+    - "[message] &#FFFF00   ◆ /cfp links list &f— Посмотреть список вайтлиста ссылок и доменов"
+    - "[message] &r "
+    - "[message] &#FFFF00   ◆ /cfp caps whitelist add/remove <Слово> &f— Управление вайтлиста капса"
+    - "[message] &#FFFF00   ◆ /cfp caps list &f— Посмотреть список вайтлиста капса"
+    - "[message] &r "
+    - "[message] &#FFFF00   ◆ /cfp notify (on/off) (Никнейм) &f— Переключить уведомления"
+    - "[message] &#FFFF00   ◆ /cfp reload (configs/cache/all) &f— Перезагрузка определённой части плагина"
+    - "[message] &#FFFF00   ◆ /cfp help &f—   (это сообщение)"
+    - "[message] &r "
+    - "[sound] BLOCK_LEVER_CLICK"

@@ -1,0 +1,4 @@
+Manifest-Version: 1.0
+Main-Class: 
+Class-Path: LuckPerms-Bukkit-5.4.40.jar
+
